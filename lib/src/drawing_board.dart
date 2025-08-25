@@ -8,6 +8,7 @@ import 'helper/ex_value_builder.dart';
 import 'helper/get_size.dart';
 import 'paint_contents/circle.dart';
 import 'paint_contents/eraser.dart';
+import 'paint_contents/pointer.dart';
 import 'paint_contents/rectangle.dart';
 import 'paint_contents/simple_line.dart';
 import 'paint_contents/smooth_line.dart';
@@ -28,6 +29,7 @@ class DrawingBoard extends StatefulWidget {
     this.controller,
     this.showDefaultActions = false,
     this.showDefaultTools = false,
+    this.paintingEnabled = true,
     this.onPointerDown,
     this.onPointerMove,
     this.onPointerUp,
@@ -60,6 +62,9 @@ class DrawingBoard extends StatefulWidget {
 
   /// 显示默认样式的工具栏
   final bool showDefaultTools;
+
+  /// 是否启用绘画
+  final bool paintingEnabled;
 
   /// 开始拖动
   final void Function(PointerDownEvent pde)? onPointerDown;
@@ -95,6 +100,11 @@ class DrawingBoard extends StatefulWidget {
   /// 默认工具项列表
   static List<DefToolItem> defaultTools(Type currType, DrawingController controller) {
     return <DefToolItem>[
+      DefToolItem(
+        isActive: currType == Pointer,
+        icon: Icons.pan_tool_outlined,
+        onTap: () => controller.setPaintContent(Pointer()),
+      ),
       DefToolItem(
           isActive: currType == SimpleLine,
           icon: Icons.edit,
@@ -227,20 +237,26 @@ class _DrawingBoardState extends State<DrawingBoard> {
   Widget get _buildPainter {
     return ExValueBuilder<DrawConfig>(
       valueListenable: _controller.drawConfig,
-      shouldRebuild: (DrawConfig p, DrawConfig n) => p.size != n.size,
-      builder: (_, DrawConfig dc, Widget? child) {
+      // Rebuild when board size OR active tool changes
+      shouldRebuild: (DrawConfig p, DrawConfig n) =>
+          p.size != n.size || p.contentType != n.contentType,
+      builder: (_, DrawConfig dc, ___) {
+        final bool isPointerTool = dc.contentType == Pointer;
+        final bool disablePainting = !widget.paintingEnabled || isPointerTool;
         return SizedBox(
           width: dc.size?.width,
           height: dc.size?.height,
-          child: child,
+          child: IgnorePointer(
+            ignoring: disablePainting, // keep painting, ignore gestures
+            child: Painter(
+              drawingController: _controller,
+              onPointerDown: widget.onPointerDown,
+              onPointerMove: widget.onPointerMove,
+              onPointerUp: widget.onPointerUp,
+            ),
+          ),
         );
       },
-      child: Painter(
-        drawingController: _controller,
-        onPointerDown: widget.onPointerDown,
-        onPointerMove: widget.onPointerMove,
-        onPointerUp: widget.onPointerUp,
-      ),
     );
   }
 
