@@ -262,6 +262,16 @@ class DrawingController extends ChangeNotifier {
     drawConfig.value = drawConfig.value.copyWith(contentType: content.runtimeType);
   }
 
+  /// Replace drawing contents from a list at once
+  void replaceAllContents(List<PaintContent> contents) {
+    cachedImage = null;
+    _history
+      ..clear()
+      ..addAll(contents);
+    _currentIndex = _history.length;
+    _refreshDeep();
+  }
+
   /// 添加一条绘制数据
   void addContent(PaintContent content) {
     _history.add(content);
