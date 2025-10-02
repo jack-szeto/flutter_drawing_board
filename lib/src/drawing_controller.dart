@@ -134,7 +134,11 @@ class DrawConfig {
 
 /// 绘制控制器
 class DrawingController extends ChangeNotifier {
-  DrawingController({DrawConfig? config, PaintContent? content}) {
+  DrawingController({
+    DrawConfig? config,
+    PaintContent? content,
+    this.onStrokeAdded,
+  }) {
     _history = <PaintContent>[];
     _currentIndex = 0;
     realPainter = RePaintNotifier();
@@ -142,6 +146,8 @@ class DrawingController extends ChangeNotifier {
     drawConfig = SafeValueNotifier<DrawConfig>(config ?? DrawConfig.def(contentType: SimpleLine));
     setPaintContent(content ?? SimpleLine());
   }
+
+  final void Function(PaintContent stroke)? onStrokeAdded;
 
   /// 绘制开始点
   Offset? _startPoint;
@@ -369,6 +375,7 @@ class DrawingController extends ChangeNotifier {
     if (currentContent != null) {
       _history.add(currentContent!);
       _currentIndex = _history.length;
+      onStrokeAdded?.call(_history.last);
       currentContent = null;
     }
 
