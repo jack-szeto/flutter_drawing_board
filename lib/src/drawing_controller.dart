@@ -462,49 +462,102 @@ class DrawingController extends ChangeNotifier {
 
   /// 从 JSON 载入（支持：
   ///   1) 纯数组：[{}, {}, ...]
-  ///   2) 带索引：{ "data":[...], "index":N }
-  /// ）
+  ///   2) 包 data：{ "data":[...], "index":N }
+  ///   3) BoardState：{ "v":<num>,"history":[...],"index":<num> }
+  /// 并添加详细日志
   void importJson(String jsonStr) {
     try {
+      debugPrint('[DrawingBoard] importJson: start, bytes=${jsonStr.length}');
       final decoded = jsonDecode(jsonStr);
 
       late final List data;
       int? index;
+      String shape = 'unknown';
 
       if (decoded is List) {
+        // legacy pure list
         data = decoded;
+        shape = 'legacy-list';
+        debugPrint('[DrawingBoard] importJson: shape=$shape, items=${data.length}');
       } else if (decoded is Map) {
-        final d = decoded['data'];
-        if (d is List) {
-          data = d;
+        if (decoded['data'] is List) {
+          // wrapped list: {data:[...], index?}
+          data = decoded['data'] as List;
+          index = (decoded['index'] is num) ? (decoded['index'] as num).toInt() : null;
+          shape = 'wrapped-list';
+          debugPrint(
+              '[DrawingBoard] importJson: shape=$shape, items=${data.length}, index=${index ?? 'null'}');
+        } else if (decoded['v'] is num && decoded['history'] is List) {
+          // BoardState: {v, history, index}
+          data = decoded['history'] as List;
+          index = (decoded['index'] is num) ? (decoded['index'] as num).toInt() : null;
+          shape = 'board-state';
+          debugPrint(
+              '[DrawingBoard] importJson: shape=$shape(v=${decoded['v']}), items=${data.length}, index=${index ?? 'null'}');
         } else {
+          // unknown map shape
           data = const [];
+          shape = 'unknown-map';
+          debugPrint('[DrawingBoard] importJson: shape=$shape; keys=${decoded.keys.join(', ')}');
         }
-        final idx = decoded['index'];
-        if (idx is int) index = idx;
       } else {
         data = const [];
+        shape = 'unsupported-root';
+        debugPrint('[DrawingBoard] importJson: shape=$shape (${decoded.runtimeType})');
       }
 
       final List<PaintContent> contents = [];
-      for (final item in data) {
+      int bad = 0;
+
+      for (var i = 0; i < data.length; i++) {
+        final item = data[i];
+        Map<String, dynamic>? m;
         if (item is Map<String, dynamic>) {
-          final c = _contentFromJson(item);
-          if (c != null) contents.add(c);
+          m = item;
         } else if (item is Map) {
-          // normalize
-          final c = _contentFromJson(Map<String, dynamic>.from(item));
-          if (c != null) contents.add(c);
+          m = Map<String, dynamic>.from(item);
+        }
+
+        if (m == null) {
+          bad++;
+          debugPrint('[DrawingBoard] importJson: skip item#$i (not a Map): ${item.runtimeType}');
+          continue;
+        }
+
+        final t = m['type'];
+        if (t == null) {
+          bad++;
+          debugPrint('[DrawingBoard] importJson: skip item#$i (missing type): $m');
+          continue;
+        }
+
+        try {
+          final c = _contentFromJson(m);
+          if (c != null) {
+            contents.add(c);
+          } else {
+            bad++;
+            debugPrint(
+                '[DrawingBoard] importJson: _contentFromJson returned null for item#$i, type=$t');
+          }
+        } catch (e, st) {
+          bad++;
+          debugPrint('[DrawingBoard] importJson: item#$i decode error (type=$t): $e\n$st\nm=$m');
         }
       }
 
+      debugPrint(
+          '[DrawingBoard] importJson: decoded contents=${contents.length}, bad=$bad, shape=$shape');
+
       if (index != null) {
         setHistoryAndIndex(contents, index!);
+        debugPrint('[DrawingBoard] importJson: setHistoryAndIndex index=$index');
       } else {
         replaceAllContents(contents);
+        debugPrint('[DrawingBoard] importJson: replaceAllContents (index end=${_currentIndex})');
       }
     } catch (e, st) {
-      debugPrint('importJson error: $e\n$st');
+      debugPrint('[DrawingBoard] importJson error: $e\n$st');
     }
   }
 
