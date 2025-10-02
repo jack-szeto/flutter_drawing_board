@@ -1,12 +1,20 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+
 import 'helper/safe_value_notifier.dart';
+import 'paint_contents/circle.dart';
 import 'paint_contents/eraser.dart';
 import 'paint_contents/paint_content.dart';
+import 'paint_contents/pointer.dart';
+import 'paint_contents/rectangle.dart';
 import 'paint_contents/simple_line.dart';
+import 'paint_contents/smooth_line.dart';
+import 'paint_contents/straight_line.dart';
 import 'paint_extension/ex_paint.dart';
 
 /// 绘制参数
@@ -138,6 +146,9 @@ class DrawingController extends ChangeNotifier {
     DrawConfig? config,
     PaintContent? content,
     this.onStrokeAdded,
+    this.onStrokeProgress,
+    this.progressThrottle = const Duration(milliseconds: 32),
+    this.onHistoryTruncated,
   }) {
     _history = <PaintContent>[];
     _currentIndex = 0;
@@ -147,7 +158,14 @@ class DrawingController extends ChangeNotifier {
     setPaintContent(content ?? SimpleLine());
   }
 
-  final void Function(PaintContent stroke)? onStrokeAdded;
+  // callbacks
+  final void Function(PaintContent content)? onStrokeAdded;
+  final void Function(PaintContent content)? onStrokeProgress;
+  final Duration progressThrottle;
+  Timer? _progressGate;
+
+  /// NEW: 当用户在撤销之后继续绘制，导致 redo 尾部被丢弃时触发
+  final void Function(int fromIndex, int removedCount)? onHistoryTruncated;
 
   /// 绘制开始点
   Offset? _startPoint;
@@ -220,10 +238,7 @@ class DrawingController extends ChangeNotifier {
 
   /// 手指抬起
   void reduceFingerCount(Offset offset) {
-    if (drawConfig.value.fingerCount <= 0) {
-      return;
-    }
-
+    if (drawConfig.value.fingerCount <= 0) return;
     drawConfig.value = drawConfig.value.copyWith(fingerCount: drawConfig.value.fingerCount - 1);
   }
 
@@ -268,7 +283,18 @@ class DrawingController extends ChangeNotifier {
     drawConfig.value = drawConfig.value.copyWith(contentType: content.runtimeType);
   }
 
-  /// Replace drawing contents from a list at once
+  /// 完整替换历史 + 可视索引（用于精确还原）
+  void setHistoryAndIndex(List<PaintContent> history, int index) {
+    cachedImage = null;
+    _history
+      ..clear()
+      ..addAll(history);
+    _currentIndex = index.clamp(0, _history.length);
+    _refreshDeep();
+    notifyListeners();
+  }
+
+  /// Replace drawing contents from a list at once（保持全部可见）
   void replaceAllContents(List<PaintContent> contents) {
     cachedImage = null;
     _history
@@ -295,16 +321,13 @@ class DrawingController extends ChangeNotifier {
   }
 
   /// * 旋转画布
-  /// * 设置角度
   void turn() {
     drawConfig.value = drawConfig.value.copyWith(angle: (drawConfig.value.angle + 1) % 4);
   }
 
   /// 开始绘制
   void startDraw(Offset startPoint) {
-    if (_currentIndex == 0 && _paintContent is Eraser) {
-      return;
-    }
+    if (_currentIndex == 0 && _paintContent is Eraser) return;
 
     _startPoint = startPoint;
     if (_paintContent is Eraser) {
@@ -327,9 +350,7 @@ class DrawingController extends ChangeNotifier {
 
   /// 正在绘制
   void drawing(Offset nowPaint) {
-    if (!hasPaintingContent) {
-      return;
-    }
+    if (!hasPaintingContent) return;
 
     _isDrawingValidContent = true;
 
@@ -337,20 +358,26 @@ class DrawingController extends ChangeNotifier {
       eraserContent?.drawing(nowPaint);
       _refresh();
       _refreshDeep();
+      _emitProgress(eraserContent);
     } else {
       currentContent?.drawing(nowPaint);
       _refresh();
+      _emitProgress(currentContent);
     }
+  }
+
+  void _emitProgress(PaintContent? c) {
+    if (onStrokeProgress == null || c == null) return;
+    if (_progressGate != null) return; // throttle
+    _progressGate = Timer(progressThrottle, () => _progressGate = null);
+    onStrokeProgress!(c);
   }
 
   /// 结束绘制
   void endDraw() {
-    if (!hasPaintingContent) {
-      return;
-    }
+    if (!hasPaintingContent) return;
 
     if (!_isDrawingValidContent) {
-      // 清理绘制内容
       _startPoint = null;
       currentContent = null;
       eraserContent = null;
@@ -362,7 +389,10 @@ class DrawingController extends ChangeNotifier {
     _startPoint = null;
     final int hisLen = _history.length;
 
+    // 撤销后继续绘制：截断 redo 尾部
     if (hisLen > _currentIndex) {
+      final removed = hisLen - _currentIndex;
+      onHistoryTruncated?.call(_currentIndex, removed);
       _history.removeRange(_currentIndex, hisLen);
     }
 
@@ -394,15 +424,7 @@ class DrawingController extends ChangeNotifier {
     }
   }
 
-  /// Check if undo is available.
-  /// Returns true if possible.
-  bool canUndo() {
-    if (_currentIndex > 0) {
-      return true;
-    } else {
-      return false;
-    }
-  }
+  bool canUndo() => _currentIndex > 0;
 
   /// 重做
   void redo() {
@@ -414,15 +436,7 @@ class DrawingController extends ChangeNotifier {
     }
   }
 
-  /// Check if redo is available.
-  /// Returns true if possible.
-  bool canRedo() {
-    if (_currentIndex < _history.length) {
-      return true;
-    } else {
-      return false;
-    }
-  }
+  bool canRedo() => _currentIndex < _history.length;
 
   /// 清理画布
   void clear() {
@@ -430,6 +444,98 @@ class DrawingController extends ChangeNotifier {
     _history.clear();
     _currentIndex = 0;
     _refreshDeep();
+  }
+
+  /// —— 导出 / 导入（保留所有点；不做降采样） ——
+
+  /// 导出当前可见历史为 JSON 字符串（纯数组）
+  String exportJson() {
+    final list = getJsonList();
+    return jsonEncode(list);
+  }
+
+  /// 带“量化”参数的导出（目前禁用降精度：直接走原始导出）
+  String exportJsonQuantized({int xyDecimals = 1, int pressureDecimals = 2}) {
+    // NOTE: 先保留完整数据；如需恢复量化，可在此处理 points/pressure 的小数位
+    return exportJson();
+  }
+
+  /// 从 JSON 载入（支持：
+  ///   1) 纯数组：[{}, {}, ...]
+  ///   2) 带索引：{ "data":[...], "index":N }
+  /// ）
+  void importJson(String jsonStr) {
+    try {
+      final decoded = jsonDecode(jsonStr);
+
+      late final List data;
+      int? index;
+
+      if (decoded is List) {
+        data = decoded;
+      } else if (decoded is Map) {
+        final d = decoded['data'];
+        if (d is List) {
+          data = d;
+        } else {
+          data = const [];
+        }
+        final idx = decoded['index'];
+        if (idx is int) index = idx;
+      } else {
+        data = const [];
+      }
+
+      final List<PaintContent> contents = [];
+      for (final item in data) {
+        if (item is Map<String, dynamic>) {
+          final c = _contentFromJson(item);
+          if (c != null) contents.add(c);
+        } else if (item is Map) {
+          // normalize
+          final c = _contentFromJson(Map<String, dynamic>.from(item));
+          if (c != null) contents.add(c);
+        }
+      }
+
+      if (index != null) {
+        setHistoryAndIndex(contents, index!);
+      } else {
+        replaceAllContents(contents);
+      }
+    } catch (e, st) {
+      debugPrint('importJson error: $e\n$st');
+    }
+  }
+
+  /// 工厂：根据 type 反序列化 PaintContent
+  PaintContent? _contentFromJson(Map<String, dynamic> m) {
+    final type = (m['type'] as String?)?.trim();
+    if (type == null) return null;
+
+    switch (type) {
+      case 'SimpleLine':
+        return SimpleLine.fromJson(m);
+      case 'SmoothLine':
+        return SmoothLine.fromJson(m);
+      case 'StraightLine':
+        return StraightLine.fromJson(m);
+      case 'Rectangle':
+        return Rectangle.fromJson(m);
+      case 'Circle':
+        return Circle.fromJson(m);
+      case 'Eraser':
+        return Eraser.fromJson(m);
+      case 'Pointer':
+        return Pointer.fromJson(m);
+      default:
+        // 兜底：尝试 SimpleLine
+        try {
+          return SimpleLine.fromJson(m);
+        } catch (_) {
+          return null;
+        }
+    }
   }
 
   /// 获取图片数据
@@ -459,7 +565,7 @@ class DrawingController extends ChangeNotifier {
     }
   }
 
-  /// 获取画板内容Json
+  /// 获取画板内容Json（对象列表）
   List<Map<String, dynamic>> getJsonList() {
     return _history.map((PaintContent e) => e.toJson()).toList();
   }
@@ -477,16 +583,13 @@ class DrawingController extends ChangeNotifier {
   /// 销毁控制器
   @override
   void dispose() {
-    if (!_mounted) {
-      return;
-    }
+    if (!_mounted) return;
 
     drawConfig.dispose();
     realPainter?.dispose();
     painter?.dispose();
 
     _mounted = false;
-
     super.dispose();
   }
 }

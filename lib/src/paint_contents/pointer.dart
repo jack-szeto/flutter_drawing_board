@@ -6,6 +6,12 @@ class Pointer extends PaintContent {
   Pointer() : super();
   Pointer.paint(super.paint) : super.paint();
 
+  /// Minimal deserializer so controller.importJson can construct a Pointer.
+  /// We intentionally ignore fields because Pointer doesn't render anything.
+  static Pointer fromJson(Map<String, dynamic> json) {
+    return Pointer();
+  }
+
   @override
   PaintContent copy() {
     // Copy common paint fields to avoid sharing the same Paint instance.
@@ -40,6 +46,7 @@ class Pointer extends PaintContent {
 
   @override
   Map<String, dynamic> toContentJson() {
+    // No content fields for Pointer.
     return <String, dynamic>{};
   }
 }
