@@ -49,7 +49,6 @@ class DrawingBoard extends StatefulWidget {
     this.onInteractionUpdate,
     this.transformationController,
     this.alignment = Alignment.topCenter,
-    this.useExternalInteractiveViewer = false,
   });
 
   /// 画板背景控件
@@ -97,7 +96,6 @@ class DrawingBoard extends StatefulWidget {
   final double boardScaleFactor;
   final TransformationController? transformationController;
   final AlignmentGeometry alignment;
-  final bool useExternalInteractiveViewer;
 
   /// 默认工具项列表
   static List<DefToolItem> defaultTools(Type currType, DrawingController controller) {
@@ -161,28 +159,23 @@ class _DrawingBoardState extends State<DrawingBoard> {
 
   @override
   Widget build(BuildContext context) {
-    Widget content;
-    if (widget.useExternalInteractiveViewer) {
-      content = Align(alignment: widget.alignment, child: _buildBoard);
-    } else {
-      content = InteractiveViewer(
-        maxScale: widget.maxScale,
-        minScale: widget.minScale,
-        boundaryMargin:
-            widget.boardBoundaryMargin ?? EdgeInsets.all(MediaQuery.of(context).size.width),
-        clipBehavior: widget.boardClipBehavior,
-        panAxis: widget.panAxis,
-        constrained: widget.boardConstrained,
-        onInteractionStart: widget.onInteractionStart,
-        onInteractionUpdate: widget.onInteractionUpdate,
-        onInteractionEnd: widget.onInteractionEnd,
-        scaleFactor: widget.boardScaleFactor,
-        panEnabled: widget.boardPanEnabled,
-        scaleEnabled: widget.boardScaleEnabled,
-        transformationController: widget.transformationController,
-        child: Align(alignment: widget.alignment, child: _buildBoard),
-      );
-    }
+    Widget content = InteractiveViewer(
+      maxScale: widget.maxScale,
+      minScale: widget.minScale,
+      boundaryMargin:
+          widget.boardBoundaryMargin ?? EdgeInsets.all(MediaQuery.of(context).size.width),
+      clipBehavior: widget.boardClipBehavior,
+      panAxis: widget.panAxis,
+      constrained: widget.boardConstrained,
+      onInteractionStart: widget.onInteractionStart,
+      onInteractionUpdate: widget.onInteractionUpdate,
+      onInteractionEnd: widget.onInteractionEnd,
+      scaleFactor: widget.boardScaleFactor,
+      panEnabled: widget.boardPanEnabled,
+      scaleEnabled: widget.boardScaleEnabled,
+      transformationController: widget.transformationController,
+      child: Align(alignment: widget.alignment, child: _buildBoard),
+    );
 
     if (widget.showDefaultActions || widget.showDefaultTools) {
       content = Column(
