@@ -1,9 +1,10 @@
 import 'dart:math';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'drawing_controller.dart';
 
+import 'drawing_controller.dart';
 import 'helper/ex_value_builder.dart';
 import 'helper/get_size.dart';
 import 'paint_contents/circle.dart';
@@ -20,6 +21,8 @@ typedef DefaultToolsBuilder = List<DefToolItem> Function(
   Type currType,
   DrawingController controller,
 );
+
+enum WriteMode { stylusOnly, stylusAndTouch, stylusAndMouse, any }
 
 /// 画板
 class DrawingBoard extends StatefulWidget {
@@ -49,7 +52,10 @@ class DrawingBoard extends StatefulWidget {
     this.onInteractionUpdate,
     this.transformationController,
     this.alignment = Alignment.topCenter,
+    this.writeMode = WriteMode.stylusOnly,
   });
+
+  final WriteMode writeMode;
 
   /// 画板背景控件
   final Widget background;
@@ -157,8 +163,28 @@ class _DrawingBoardState extends State<DrawingBoard> {
     super.dispose();
   }
 
+  Set<PointerDeviceKind> _kindsFor(WriteMode m) {
+    switch (m) {
+      case WriteMode.stylusOnly:
+        return {PointerDeviceKind.stylus};
+      case WriteMode.stylusAndTouch:
+        return {PointerDeviceKind.stylus, PointerDeviceKind.touch};
+      case WriteMode.stylusAndMouse:
+        return {PointerDeviceKind.stylus, PointerDeviceKind.mouse, PointerDeviceKind.trackpad};
+      case WriteMode.any:
+        return {
+          PointerDeviceKind.stylus,
+          PointerDeviceKind.touch,
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.trackpad,
+        };
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final writingKinds = _kindsFor(widget.writeMode);
+
     Widget content = InteractiveViewer(
       maxScale: widget.maxScale,
       minScale: widget.minScale,
@@ -189,9 +215,21 @@ class _DrawingBoardState extends State<DrawingBoard> {
     }
 
     return Listener(
-      onPointerDown: (PointerDownEvent pde) => _controller.addFingerCount(pde.localPosition),
-      onPointerUp: (PointerUpEvent pue) => _controller.reduceFingerCount(pue.localPosition),
-      onPointerCancel: (PointerCancelEvent pce) => _controller.reduceFingerCount(pce.localPosition),
+      onPointerDown: (PointerDownEvent e) {
+        if (writingKinds.contains(e.kind)) {
+          _controller.addFingerCount(e.localPosition);
+        }
+      },
+      onPointerUp: (PointerUpEvent e) {
+        if (writingKinds.contains(e.kind)) {
+          _controller.reduceFingerCount(e.localPosition);
+        }
+      },
+      onPointerCancel: (PointerCancelEvent e) {
+        if (writingKinds.contains(e.kind)) {
+          _controller.reduceFingerCount(e.localPosition);
+        }
+      },
       child: content,
     );
   }
@@ -253,6 +291,7 @@ class _DrawingBoardState extends State<DrawingBoard> {
               onPointerDown: widget.onPointerDown,
               onPointerMove: widget.onPointerMove,
               onPointerUp: widget.onPointerUp,
+              allowedKinds: _kindsFor(widget.writeMode),
             ),
           ),
         );

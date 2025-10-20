@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../paint_contents.dart';
@@ -16,6 +17,7 @@ class Painter extends StatelessWidget {
     this.onPointerDown,
     this.onPointerMove,
     this.onPointerUp,
+    this.allowedKinds,
   });
 
   /// 绘制控制器
@@ -33,8 +35,13 @@ class Painter extends StatelessWidget {
   /// 边缘裁剪方式
   final Clip clipBehavior;
 
+  final Set<PointerDeviceKind>? allowedKinds;
+
+  bool _acceptsDevice(PointerEvent e) => allowedKinds == null || allowedKinds!.contains(e.kind);
+
   /// 手指落下
   void _onPointerDown(PointerDownEvent pde) {
+    if (!_acceptsDevice(pde)) return;
     if (!drawingController.couldStartDraw) {
       return;
     }
@@ -45,6 +52,7 @@ class Painter extends StatelessWidget {
 
   /// 手指移动
   void _onPointerMove(PointerMoveEvent pme) {
+    if (!_acceptsDevice(pme)) return;
     if (!drawingController.couldDrawing) {
       if (drawingController.hasPaintingContent) {
         drawingController.endDraw();
@@ -63,6 +71,7 @@ class Painter extends StatelessWidget {
 
   /// 手指抬起
   void _onPointerUp(PointerUpEvent pue) {
+    if (!_acceptsDevice(pue)) return;
     if (!drawingController.couldDrawing || !drawingController.hasPaintingContent) {
       return;
     }
@@ -76,6 +85,7 @@ class Painter extends StatelessWidget {
   }
 
   void _onPointerCancel(PointerCancelEvent pce) {
+    if (!_acceptsDevice(pce)) return;
     if (!drawingController.couldDrawing) {
       return;
     }
