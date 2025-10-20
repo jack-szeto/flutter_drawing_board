@@ -15,6 +15,7 @@ import 'paint_contents/simple_line.dart';
 import 'paint_contents/smooth_line.dart';
 import 'paint_contents/straight_line.dart';
 import 'painter.dart';
+import 'stylus_pan_blocker.dart';
 
 /// 默认工具栏构建器
 typedef DefaultToolsBuilder = List<DefToolItem> Function(
@@ -182,9 +183,12 @@ class _DrawingBoardState extends State<DrawingBoard> {
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
-    final writingKinds = _kindsFor(widget.writeMode);
+    // 依 writeMode 取出可書寫的裝置 kinds（假設你已經在 State 裡有 _kindsFor）
+    final Set<PointerDeviceKind> writingKinds = _kindsFor(widget.writeMode);
 
+    // 原本的畫布 + 平移/縮放
     Widget content = InteractiveViewer(
       maxScale: widget.maxScale,
       minScale: widget.minScale,
@@ -214,6 +218,17 @@ class _DrawingBoardState extends State<DrawingBoard> {
       );
     }
 
+    // 疊一層：只吃 stylus 的手勢，讓 InteractiveViewer 拿不到「筆的 pan」
+    final Widget layered = Stack(
+      children: [
+        content,
+        if (writingKinds.contains(PointerDeviceKind.stylus) ||
+            writingKinds.contains(PointerDeviceKind.invertedStylus))
+          const StylusPanBlocker(), // 見下方類別
+      ],
+    );
+
+    // 仍然只讓「可書寫裝置」影響 fingerCount（筆寫、手指不寫時不動 fingerCount）
     return Listener(
       onPointerDown: (PointerDownEvent e) {
         if (writingKinds.contains(e.kind)) {
@@ -230,7 +245,7 @@ class _DrawingBoardState extends State<DrawingBoard> {
           _controller.reduceFingerCount(e.localPosition);
         }
       },
-      child: content,
+      child: layered,
     );
   }
 
