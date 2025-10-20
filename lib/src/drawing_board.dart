@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'drawing_controller.dart';
 import 'helper/ex_value_builder.dart';
 import 'helper/get_size.dart';
+import 'mouse_pan_blocker.dart';
 import 'paint_contents/circle.dart';
 import 'paint_contents/eraser.dart';
 import 'paint_contents/pointer.dart';
@@ -220,11 +221,12 @@ class _DrawingBoardState extends State<DrawingBoard> {
 
     // 疊一層：只吃 stylus 的手勢，讓 InteractiveViewer 拿不到「筆的 pan」
     final Widget layered = Stack(
-      children: [
+      children: <Widget>[
         content,
         if (writingKinds.contains(PointerDeviceKind.stylus) ||
             writingKinds.contains(PointerDeviceKind.invertedStylus))
           const StylusPanBlocker(), // 見下方類別
+        if (writingKinds.contains(PointerDeviceKind.mouse)) const MousePanBlocker(),
       ],
     );
 
