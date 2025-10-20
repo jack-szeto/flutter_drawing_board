@@ -107,7 +107,8 @@ class Painter extends StatelessWidget {
       onPointerMove: _onPointerMove,
       onPointerUp: _onPointerUp,
       onPointerCancel: _onPointerCancel,
-      behavior: HitTestBehavior.opaque,
+      // behavior: HitTestBehavior.opaque,
+
       child: ExValueBuilder<DrawConfig>(
         valueListenable: drawingController.drawConfig,
         shouldRebuild: (DrawConfig p, DrawConfig n) => p.fingerCount != n.fingerCount,
@@ -115,10 +116,11 @@ class Painter extends StatelessWidget {
           // 是否能拖动画布
           final bool isPanEnabled = config.fingerCount > 1;
 
+          final bool touchWrites = allowedKinds?.contains(PointerDeviceKind.touch) ?? false;
           return GestureDetector(
-            onPanDown: !isPanEnabled ? _onPanDown : null,
-            onPanUpdate: !isPanEnabled ? _onPanUpdate : null,
-            onPanEnd: !isPanEnabled ? _onPanEnd : null,
+            onPanDown: touchWrites && !isPanEnabled ? _onPanDown : null,
+            onPanUpdate: touchWrites && !isPanEnabled ? _onPanUpdate : null,
+            onPanEnd: touchWrites && !isPanEnabled ? _onPanEnd : null,
             child: child,
           );
         },
