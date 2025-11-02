@@ -55,7 +55,10 @@ class DrawingBoard extends StatefulWidget {
     this.transformationController,
     this.alignment = Alignment.topCenter,
     this.writeMode = WriteMode.stylusOnly,
+    this.surfaceKey,
   });
+
+  final GlobalKey? surfaceKey;
 
   final WriteMode writeMode;
 
@@ -285,7 +288,10 @@ class _DrawingBoardState extends State<DrawingBoard> {
   /// 构建背景
   Widget get _buildImage => GetSize(
         onChange: (Size? size) => _controller.setBoardSize(size),
-        child: widget.background,
+        child: KeyedSubtree(
+          key: widget.surfaceKey,
+          child: widget.background,
+        ),
       );
 
   /// 构建绘制层
