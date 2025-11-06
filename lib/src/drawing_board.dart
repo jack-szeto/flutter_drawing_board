@@ -187,7 +187,6 @@ class _DrawingBoardState extends State<DrawingBoard> {
   }
 
   @override
-  @override
   Widget build(BuildContext context) {
     // 依 writeMode 取出可書寫的裝置 kinds（假設你已經在 State 裡有 _kindsFor）
     final Set<PointerDeviceKind> writingKinds = _kindsFor(widget.writeMode);

@@ -242,6 +242,26 @@ class DrawingController extends ChangeNotifier {
     drawConfig.value = drawConfig.value.copyWith(fingerCount: drawConfig.value.fingerCount - 1);
   }
 
+  /// Create a new PaintContent by Type
+  PaintContent _newContentFor(Type t) {
+    if (t == Pointer) return Pointer();
+    if (t == SimpleLine) return SimpleLine();
+    if (t == SmoothLine) return SmoothLine();
+    if (t == StraightLine) return StraightLine();
+    if (t == Rectangle) return Rectangle();
+    if (t == Circle) return Circle();
+    if (t == Eraser) return Eraser();
+    // default
+    return SimpleLine();
+  }
+
+  /// Apply a full DrawConfig and sync _paintContent accordingly.
+  void applyDrawConfig(DrawConfig cfg) {
+    drawConfig.value = cfg;
+    final PaintContent content = _newContentFor(cfg.contentType);
+    setPaintContent(content);
+  }
+
   /// 设置绘制样式
   void setStyle({
     BlendMode? blendMode,
