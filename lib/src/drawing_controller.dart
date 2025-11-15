@@ -146,9 +146,6 @@ class DrawingController extends ChangeNotifier {
     DrawConfig? config,
     PaintContent? content,
     this.onStrokeAdded,
-    this.onStrokeProgress,
-    this.progressThrottle = const Duration(milliseconds: 32),
-    this.onHistoryTruncated,
   }) {
     _history = <PaintContent>[];
     _currentIndex = 0;
@@ -160,12 +157,6 @@ class DrawingController extends ChangeNotifier {
 
   // callbacks
   final void Function(PaintContent content)? onStrokeAdded;
-  final void Function(PaintContent content)? onStrokeProgress;
-  final Duration progressThrottle;
-  Timer? _progressGate;
-
-  /// NEW: 当用户在撤销之后继续绘制，导致 redo 尾部被丢弃时触发
-  final void Function(int fromIndex, int removedCount)? onHistoryTruncated;
 
   /// 绘制开始点
   Offset? _startPoint;
@@ -378,19 +369,10 @@ class DrawingController extends ChangeNotifier {
       eraserContent?.drawing(nowPaint);
       _refresh();
       _refreshDeep();
-      _emitProgress(eraserContent);
     } else {
       currentContent?.drawing(nowPaint);
       _refresh();
-      _emitProgress(currentContent);
     }
-  }
-
-  void _emitProgress(PaintContent? c) {
-    if (onStrokeProgress == null || c == null) return;
-    if (_progressGate != null) return; // throttle
-    _progressGate = Timer(progressThrottle, () => _progressGate = null);
-    onStrokeProgress!(c);
   }
 
   /// 结束绘制
@@ -411,8 +393,6 @@ class DrawingController extends ChangeNotifier {
 
     // 撤销后继续绘制：截断 redo 尾部
     if (hisLen > _currentIndex) {
-      final removed = hisLen - _currentIndex;
-      onHistoryTruncated?.call(_currentIndex, removed);
       _history.removeRange(_currentIndex, hisLen);
     }
 
@@ -464,151 +444,6 @@ class DrawingController extends ChangeNotifier {
     _history.clear();
     _currentIndex = 0;
     _refreshDeep();
-  }
-
-  /// —— 导出 / 导入（保留所有点；不做降采样） ——
-
-  /// 导出当前可见历史为 JSON 字符串（纯数组）
-  String exportJson() {
-    final list = getJsonList();
-    return jsonEncode(list);
-  }
-
-  /// 带“量化”参数的导出（目前禁用降精度：直接走原始导出）
-  String exportJsonQuantized({int xyDecimals = 1, int pressureDecimals = 2}) {
-    // NOTE: 先保留完整数据；如需恢复量化，可在此处理 points/pressure 的小数位
-    return exportJson();
-  }
-
-  /// 从 JSON 载入（支持：
-  ///   1) 纯数组：[{}, {}, ...]
-  ///   2) 包 data：{ "data":[...], "index":N }
-  ///   3) BoardState：{ "v":<num>,"history":[...],"index":<num> }
-  /// 并添加详细日志
-  void importJson(String jsonStr) {
-    try {
-      debugPrint('[DrawingBoard] importJson: start, bytes=${jsonStr.length}');
-      final decoded = jsonDecode(jsonStr);
-
-      late final List data;
-      int? index;
-      String shape = 'unknown';
-
-      if (decoded is List) {
-        // legacy pure list
-        data = decoded;
-        shape = 'legacy-list';
-        debugPrint('[DrawingBoard] importJson: shape=$shape, items=${data.length}');
-      } else if (decoded is Map) {
-        if (decoded['data'] is List) {
-          // wrapped list: {data:[...], index?}
-          data = decoded['data'] as List;
-          index = (decoded['index'] is num) ? (decoded['index'] as num).toInt() : null;
-          shape = 'wrapped-list';
-          debugPrint(
-              '[DrawingBoard] importJson: shape=$shape, items=${data.length}, index=${index ?? 'null'}');
-        } else if (decoded['v'] is num && decoded['history'] is List) {
-          // BoardState: {v, history, index}
-          data = decoded['history'] as List;
-          index = (decoded['index'] is num) ? (decoded['index'] as num).toInt() : null;
-          shape = 'board-state';
-          debugPrint(
-              '[DrawingBoard] importJson: shape=$shape(v=${decoded['v']}), items=${data.length}, index=${index ?? 'null'}');
-        } else {
-          // unknown map shape
-          data = const [];
-          shape = 'unknown-map';
-          debugPrint('[DrawingBoard] importJson: shape=$shape; keys=${decoded.keys.join(', ')}');
-        }
-      } else {
-        data = const [];
-        shape = 'unsupported-root';
-        debugPrint('[DrawingBoard] importJson: shape=$shape (${decoded.runtimeType})');
-      }
-
-      final List<PaintContent> contents = [];
-      int bad = 0;
-
-      for (var i = 0; i < data.length; i++) {
-        final item = data[i];
-        Map<String, dynamic>? m;
-        if (item is Map<String, dynamic>) {
-          m = item;
-        } else if (item is Map) {
-          m = Map<String, dynamic>.from(item);
-        }
-
-        if (m == null) {
-          bad++;
-          debugPrint('[DrawingBoard] importJson: skip item#$i (not a Map): ${item.runtimeType}');
-          continue;
-        }
-
-        final t = m['type'];
-        if (t == null) {
-          bad++;
-          debugPrint('[DrawingBoard] importJson: skip item#$i (missing type): $m');
-          continue;
-        }
-
-        try {
-          final c = _contentFromJson(m);
-          if (c != null) {
-            contents.add(c);
-          } else {
-            bad++;
-            debugPrint(
-                '[DrawingBoard] importJson: _contentFromJson returned null for item#$i, type=$t');
-          }
-        } catch (e, st) {
-          bad++;
-          debugPrint('[DrawingBoard] importJson: item#$i decode error (type=$t): $e\n$st\nm=$m');
-        }
-      }
-
-      debugPrint(
-          '[DrawingBoard] importJson: decoded contents=${contents.length}, bad=$bad, shape=$shape');
-
-      if (index != null) {
-        setHistoryAndIndex(contents, index!);
-        debugPrint('[DrawingBoard] importJson: setHistoryAndIndex index=$index');
-      } else {
-        replaceAllContents(contents);
-        debugPrint('[DrawingBoard] importJson: replaceAllContents (index end=${_currentIndex})');
-      }
-    } catch (e, st) {
-      debugPrint('[DrawingBoard] importJson error: $e\n$st');
-    }
-  }
-
-  /// 工厂：根据 type 反序列化 PaintContent
-  PaintContent? _contentFromJson(Map<String, dynamic> m) {
-    final type = (m['type'] as String?)?.trim();
-    if (type == null) return null;
-
-    switch (type) {
-      case 'SimpleLine':
-        return SimpleLine.fromJson(m);
-      case 'SmoothLine':
-        return SmoothLine.fromJson(m);
-      case 'StraightLine':
-        return StraightLine.fromJson(m);
-      case 'Rectangle':
-        return Rectangle.fromJson(m);
-      case 'Circle':
-        return Circle.fromJson(m);
-      case 'Eraser':
-        return Eraser.fromJson(m);
-      case 'Pointer':
-        return Pointer.fromJson(m);
-      default:
-        // 兜底：尝试 SimpleLine
-        try {
-          return SimpleLine.fromJson(m);
-        } catch (_) {
-          return null;
-        }
-    }
   }
 
   /// 获取图片数据
