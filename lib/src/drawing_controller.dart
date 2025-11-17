@@ -198,6 +198,7 @@ class DrawingController extends ChangeNotifier {
 
   /// 是否绘制了有效内容
   bool _isDrawingValidContent = false;
+  void setDrawingValid(bool valid) => _isDrawingValidContent = valid;
 
   /// 获取当前步骤索引
   int get currentIndex => _currentIndex;
