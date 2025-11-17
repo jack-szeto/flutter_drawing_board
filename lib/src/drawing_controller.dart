@@ -146,6 +146,7 @@ class DrawingController extends ChangeNotifier {
     DrawConfig? config,
     PaintContent? content,
     this.onStrokeAdded,
+    this.kMinStrokeDistance,
   }) {
     _history = <PaintContent>[];
     _currentIndex = 0;
@@ -154,6 +155,7 @@ class DrawingController extends ChangeNotifier {
     drawConfig = SafeValueNotifier<DrawConfig>(config ?? DrawConfig.def(contentType: SimpleLine));
     setPaintContent(content ?? SimpleLine());
   }
+  double? kMinStrokeDistance;
 
   // callbacks
   final void Function(PaintContent content)? onStrokeAdded;
@@ -341,6 +343,8 @@ class DrawingController extends ChangeNotifier {
   void startDraw(Offset startPoint) {
     if (_currentIndex == 0 && _paintContent is Eraser) return;
 
+    _isDrawingValidContent = false;
+
     _startPoint = startPoint;
     if (_paintContent is Eraser) {
       eraserContent = _paintContent.copy();
@@ -364,7 +368,12 @@ class DrawingController extends ChangeNotifier {
   void drawing(Offset nowPaint) {
     if (!hasPaintingContent) return;
 
-    _isDrawingValidContent = true;
+    if (!_isDrawingValidContent && _startPoint != null) {
+      final dist = (nowPaint - _startPoint!).distance;
+      if (dist >= (kMinStrokeDistance ?? 0)) {
+        _isDrawingValidContent = true;
+      }
+    }
 
     if (_paintContent is Eraser) {
       eraserContent?.drawing(nowPaint);
