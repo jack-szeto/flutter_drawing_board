@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import '../paint_contents.dart';
 import 'helper/safe_value_notifier.dart';
 import 'paint_contents/circle.dart';
 import 'paint_contents/eraser.dart';
@@ -245,6 +246,7 @@ class DrawingController extends ChangeNotifier {
     if (t == Rectangle) return Rectangle();
     if (t == Circle) return Circle();
     if (t == Eraser) return Eraser();
+    if (t == ObjectEraser) return ObjectEraser();
     // default
     return SimpleLine();
   }
@@ -339,14 +341,17 @@ class DrawingController extends ChangeNotifier {
     drawConfig.value = drawConfig.value.copyWith(angle: (drawConfig.value.angle + 1) % 4);
   }
 
+  bool get _isAnyEraser => _paintContent is Eraser || _paintContent is ObjectEraser;
+
   /// 开始绘制
+
   void startDraw(Offset startPoint) {
-    if (_currentIndex == 0 && _paintContent is Eraser) return;
+    if (_currentIndex == 0 && _isAnyEraser) return;
 
     _isDrawingValidContent = false;
-
     _startPoint = startPoint;
-    if (_paintContent is Eraser) {
+
+    if (_isAnyEraser) {
       eraserContent = _paintContent.copy();
       eraserContent?.paint = drawConfig.value.paint.copyWith();
       eraserContent?.startDraw(startPoint);
@@ -375,7 +380,7 @@ class DrawingController extends ChangeNotifier {
       }
     }
 
-    if (_paintContent is Eraser) {
+    if (_isAnyEraser) {
       eraserContent?.drawing(nowPaint);
       _refresh();
       _refreshDeep();
@@ -459,10 +464,8 @@ class DrawingController extends ChangeNotifier {
   /// 获取图片数据
   Future<ByteData?> getImageData() async {
     try {
-      final RenderRepaintBoundary boundary =
-          painterKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-      final ui.Image image =
-          await boundary.toImage(pixelRatio: View.of(painterKey.currentContext!).devicePixelRatio);
+      final RenderRepaintBoundary boundary = painterKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final ui.Image image = await boundary.toImage(pixelRatio: View.of(painterKey.currentContext!).devicePixelRatio);
       return await image.toByteData(format: ui.ImageByteFormat.png);
     } catch (e) {
       debugPrint('获取图片数据出错:$e');

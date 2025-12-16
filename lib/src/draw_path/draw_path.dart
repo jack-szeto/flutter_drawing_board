@@ -31,8 +31,7 @@ class DrawPath {
 
   factory DrawPath.fromJson(
     Map<String, dynamic> data, {
-    OperationStep Function(String type, Map<String, dynamic> jsonStepMap, Path genPath)?
-        stepFactory,
+    OperationStep Function(String type, Map<String, dynamic> jsonStepMap, Path genPath)? stepFactory,
   }) {
     final List<OperationStep> steps = <OperationStep>[];
 
@@ -147,8 +146,7 @@ class DrawPath {
           genPath.relativeMoveTo(relativeMoveTo.dx, relativeMoveTo.dy);
         case 'relativeQuadraticBezierTo':
           // steps.add(RelativeQuadraticBezierTo.fromJson(jsonStepMap));
-          final RelativeQuadraticBezierTo relativeQuadraticBezierTo =
-              RelativeQuadraticBezierTo.fromJson(jsonStepMap);
+          final RelativeQuadraticBezierTo relativeQuadraticBezierTo = RelativeQuadraticBezierTo.fromJson(jsonStepMap);
           steps.add(relativeQuadraticBezierTo);
           genPath.relativeQuadraticBezierTo(
             relativeQuadraticBezierTo.x1,
@@ -176,12 +174,115 @@ class DrawPath {
   final List<OperationStep> steps;
   final Path path;
 
+  // ---- Object eraser needs point samples for hit-test ----
+  List<Offset>? _cachedPoints;
+
+  /// Polyline-ish points reconstructed from steps.
+  /// If steps are mostly curves, fallback to sampling PathMetrics.
+  List<Offset> get points {
+    _cachedPoints ??= _buildPoints();
+    return _cachedPoints!;
+  }
+
+  void _invalidatePoints() => _cachedPoints = null;
+
+  List<Offset> _buildPoints() {
+    final List<Offset> pts = <Offset>[];
+
+    Offset cursor = Offset.zero;
+    bool hasCursor = false;
+
+    void addPoint(Offset p) {
+      pts.add(p);
+      cursor = p;
+      hasCursor = true;
+    }
+
+    for (final OperationStep s in steps) {
+      if (s is MoveTo) {
+        addPoint(Offset(s.x, s.y));
+        continue;
+      }
+      if (s is LineTo) {
+        addPoint(Offset(s.x, s.y));
+        continue;
+      }
+      if (s is RelativeMoveTo) {
+        addPoint((hasCursor ? cursor : Offset.zero) + Offset(s.dx, s.dy));
+        continue;
+      }
+      if (s is RelativeLineTo) {
+        addPoint((hasCursor ? cursor : Offset.zero) + Offset(s.dx, s.dy));
+        continue;
+      }
+
+      // Curves: we at least record the end point (good enough for coarse hit-test)
+      if (s is QuadraticBezierTo) {
+        addPoint(Offset(s.x2, s.y2));
+        continue;
+      }
+      if (s is RelativeQuadraticBezierTo) {
+        addPoint((hasCursor ? cursor : Offset.zero) + Offset(s.x2, s.y2));
+        continue;
+      }
+      if (s is CubicTo) {
+        addPoint(Offset(s.x3, s.y3));
+        continue;
+      }
+      if (s is RelativeCubicTo) {
+        addPoint((hasCursor ? cursor : Offset.zero) + Offset(s.x3, s.y3));
+        continue;
+      }
+      if (s is ConicTo) {
+        addPoint(Offset(s.x2, s.y2));
+        continue;
+      }
+      if (s is RelativeConicTo) {
+        addPoint((hasCursor ? cursor : Offset.zero) + Offset(s.x2, s.y2));
+        continue;
+      }
+      if (s is ArcToPoint) {
+        addPoint(s.arcEnd);
+        continue;
+      }
+      if (s is RelativeArcToPoint) {
+        addPoint((hasCursor ? cursor : Offset.zero) + s.arcEndDelta);
+        continue;
+      }
+
+      // Optional: if you really use PathShift in your project, you can shift existing points here
+      if (s is PathShift) {
+        final Offset off = s.offset;
+        for (int i = 0; i < pts.length; i++) {
+          pts[i] = pts[i] + off;
+        }
+        if (hasCursor) cursor = cursor + off;
+        continue;
+      }
+    }
+
+    // If we didn't get enough points from steps (e.g. arcTo/complex paths), fallback sampling.
+    if (pts.length >= 2) return pts;
+
+    const double step = 6.0; // tune for accuracy/perf
+    final List<Offset> sampled = <Offset>[];
+    for (final metric in path.computeMetrics()) {
+      for (double d = 0; d <= metric.length; d += step) {
+        final t = metric.getTangentForOffset(d);
+        if (t != null) sampled.add(t.position);
+      }
+    }
+    return sampled;
+  }
+
   void moveTo(double x, double y) {
+    _invalidatePoints();
     steps.add(MoveTo(x, y));
     path.moveTo(x, y);
   }
 
   void arcTo(Rect rect, double startAngle, double sweepAngle, bool forceMoveTo) {
+    _invalidatePoints();
     steps.add(ArcTo(
       rect: rect,
       startAngle: startAngle,
@@ -199,6 +300,7 @@ class DrawPath {
     bool largeArc = false,
     bool clockwise = true,
   }) {
+    _invalidatePoints();
     steps.add(ArcToPoint(arcEnd, radius, rotation, largeArc, clockwise));
     path.arcToPoint(
       arcEnd,
@@ -210,21 +312,25 @@ class DrawPath {
   }
 
   void conicTo(double x1, double y1, double x2, double y2, double w) {
+    _invalidatePoints();
     steps.add(ConicTo(x1, y1, x2, y2, w));
     path.conicTo(x1, y1, x2, y2, w);
   }
 
   void cubicTo(double x1, double y1, double x2, double y2, double x3, double y3) {
+    _invalidatePoints();
     steps.add(CubicTo(x1, y1, x2, y2, x3, y3));
     path.cubicTo(x1, y1, x2, y2, x3, y3);
   }
 
   void lineTo(double x, double y) {
+    _invalidatePoints();
     steps.add(LineTo(x, y));
     path.lineTo(x, y);
   }
 
   void quadraticBezierTo(double x1, double y1, double x2, double y2) {
+    _invalidatePoints();
     steps.add(QuadraticBezierTo(x1, y1, x2, y2));
     path.quadraticBezierTo(x1, y1, x2, y2);
   }
@@ -236,6 +342,7 @@ class DrawPath {
     bool largeArc = false,
     bool clockwise = true,
   }) {
+    _invalidatePoints();
     steps.add(RelativeArcToPoint(arcEndDelta, radius, rotation, largeArc, clockwise));
     path.relativeArcToPoint(
       arcEndDelta,
@@ -247,16 +354,19 @@ class DrawPath {
   }
 
   void relativeConicTo(double x1, double y1, double x2, double y2, double w) {
+    _invalidatePoints();
     steps.add(RelativeConicTo(x1, y1, x2, y2, w));
     path.relativeConicTo(x1, y1, x2, y2, w);
   }
 
   void relativeCubicTo(double x1, double y1, double x2, double y2, double x3, double y3) {
+    _invalidatePoints();
     steps.add(RelativeCubicTo(x1, y1, x2, y2, x3, y3));
     path.relativeCubicTo(x1, y1, x2, y2, x3, y3);
   }
 
   void relativeLineTo(double dx, double dy) {
+    _invalidatePoints();
     steps.add(RelativeLineTo(dx, dy));
     path.relativeLineTo(dx, dy);
   }
@@ -277,11 +387,13 @@ class DrawPath {
   }
 
   void close() {
+    _invalidatePoints();
     steps.add(PathClose());
     path.close();
   }
 
   void reset() {
+    _invalidatePoints();
     steps.clear();
     path.reset();
   }

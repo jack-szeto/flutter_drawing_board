@@ -3,18 +3,11 @@ import 'dart:math';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-
+import '../paint_contents.dart';
 import 'drawing_controller.dart';
 import 'helper/ex_value_builder.dart';
 import 'helper/get_size.dart';
 import 'mouse_pan_blocker.dart';
-import 'paint_contents/circle.dart';
-import 'paint_contents/eraser.dart';
-import 'paint_contents/pointer.dart';
-import 'paint_contents/rectangle.dart';
-import 'paint_contents/simple_line.dart';
-import 'paint_contents/smooth_line.dart';
-import 'paint_contents/straight_line.dart';
 import 'painter.dart';
 import 'stylus_pan_blocker.dart';
 
@@ -117,13 +110,9 @@ class DrawingBoard extends StatefulWidget {
         onTap: () => controller.setPaintContent(Pointer()),
       ),
       DefToolItem(
-          isActive: currType == SimpleLine,
-          icon: Icons.edit,
-          onTap: () => controller.setPaintContent(SimpleLine())),
+          isActive: currType == SimpleLine, icon: Icons.edit, onTap: () => controller.setPaintContent(SimpleLine())),
       DefToolItem(
-          isActive: currType == SmoothLine,
-          icon: Icons.brush,
-          onTap: () => controller.setPaintContent(SmoothLine())),
+          isActive: currType == SmoothLine, icon: Icons.brush, onTap: () => controller.setPaintContent(SmoothLine())),
       DefToolItem(
           isActive: currType == StraightLine,
           icon: Icons.show_chart,
@@ -133,13 +122,16 @@ class DrawingBoard extends StatefulWidget {
           icon: CupertinoIcons.stop,
           onTap: () => controller.setPaintContent(Rectangle())),
       DefToolItem(
-          isActive: currType == Circle,
-          icon: CupertinoIcons.circle,
-          onTap: () => controller.setPaintContent(Circle())),
+          isActive: currType == Circle, icon: CupertinoIcons.circle, onTap: () => controller.setPaintContent(Circle())),
       DefToolItem(
           isActive: currType == Eraser,
           icon: CupertinoIcons.bandage,
           onTap: () => controller.setPaintContent(Eraser())),
+      DefToolItem(
+        isActive: currType == ObjectEraser,
+        icon: Icons.auto_fix_off, // 你可換 icon
+        onTap: () => controller.setPaintContent(ObjectEraser()),
+      ),
     ];
   }
 
@@ -149,8 +141,7 @@ class DrawingBoard extends StatefulWidget {
 
   static Widget buildDefaultTools(DrawingController controller,
       {DefaultToolsBuilder? defaultToolsBuilder, Axis axis = Axis.horizontal}) {
-    return _DrawingBoardState.buildDefaultTools(controller,
-        defaultToolsBuilder: defaultToolsBuilder, axis: axis);
+    return _DrawingBoardState.buildDefaultTools(controller, defaultToolsBuilder: defaultToolsBuilder, axis: axis);
   }
 
   @override
@@ -195,8 +186,7 @@ class _DrawingBoardState extends State<DrawingBoard> {
     Widget content = InteractiveViewer(
       maxScale: widget.maxScale,
       minScale: widget.minScale,
-      boundaryMargin:
-          widget.boardBoundaryMargin ?? EdgeInsets.all(MediaQuery.of(context).size.width),
+      boundaryMargin: widget.boardBoundaryMargin ?? EdgeInsets.all(MediaQuery.of(context).size.width),
       clipBehavior: widget.boardClipBehavior,
       panAxis: widget.panAxis,
       constrained: widget.boardConstrained,
@@ -215,8 +205,7 @@ class _DrawingBoardState extends State<DrawingBoard> {
         children: <Widget>[
           Expanded(child: content),
           if (widget.showDefaultActions) buildDefaultActions(_controller),
-          if (widget.showDefaultTools)
-            buildDefaultTools(_controller, defaultToolsBuilder: widget.defaultToolsBuilder),
+          if (widget.showDefaultTools) buildDefaultTools(_controller, defaultToolsBuilder: widget.defaultToolsBuilder),
         ],
       );
     }
@@ -225,8 +214,7 @@ class _DrawingBoardState extends State<DrawingBoard> {
     final Widget layered = Stack(
       children: <Widget>[
         content,
-        if (writingKinds.contains(PointerDeviceKind.stylus) ||
-            writingKinds.contains(PointerDeviceKind.invertedStylus))
+        if (writingKinds.contains(PointerDeviceKind.stylus) || writingKinds.contains(PointerDeviceKind.invertedStylus))
           const StylusPanBlocker(), // 見下方類別
         if (writingKinds.contains(PointerDeviceKind.mouse)) const MousePanBlocker(),
       ],
@@ -298,8 +286,7 @@ class _DrawingBoardState extends State<DrawingBoard> {
     return ExValueBuilder<DrawConfig>(
       valueListenable: _controller.drawConfig,
       // Rebuild when board size OR active tool changes
-      shouldRebuild: (DrawConfig p, DrawConfig n) =>
-          p.size != n.size || p.contentType != n.contentType,
+      shouldRebuild: (DrawConfig p, DrawConfig n) => p.size != n.size || p.contentType != n.contentType,
       builder: (_, DrawConfig dc, ___) {
         final bool isPointerTool = dc.contentType == Pointer;
         final bool disablePainting = !widget.paintingEnabled || isPointerTool;
@@ -357,9 +344,7 @@ class _DrawingBoardState extends State<DrawingBoard> {
                     ),
                     onPressed: () => controller.redo(),
                   ),
-                  IconButton(
-                      icon: const Icon(CupertinoIcons.rotate_right),
-                      onPressed: () => controller.turn()),
+                  IconButton(icon: const Icon(CupertinoIcons.rotate_right), onPressed: () => controller.turn()),
                   IconButton(
                     icon: const Icon(CupertinoIcons.trash),
                     onPressed: () => controller.clear(),
@@ -388,10 +373,10 @@ class _DrawingBoardState extends State<DrawingBoard> {
           builder: (_, DrawConfig dc, ___) {
             final Type currType = dc.contentType;
 
-            final List<Widget> children = (defaultToolsBuilder?.call(currType, controller) ??
-                    DrawingBoard.defaultTools(currType, controller))
-                .map((DefToolItem item) => _DefToolItemWidget(item: item))
-                .toList();
+            final List<Widget> children =
+                (defaultToolsBuilder?.call(currType, controller) ?? DrawingBoard.defaultTools(currType, controller))
+                    .map((DefToolItem item) => _DefToolItemWidget(item: item))
+                    .toList();
 
             return axis == Axis.horizontal ? Row(children: children) : Column(children: children);
           },
