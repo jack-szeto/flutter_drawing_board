@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -8,14 +7,6 @@ import 'package:flutter/rendering.dart';
 
 import '../paint_contents.dart';
 import 'helper/safe_value_notifier.dart';
-import 'paint_contents/circle.dart';
-import 'paint_contents/eraser.dart';
-import 'paint_contents/paint_content.dart';
-import 'paint_contents/pointer.dart';
-import 'paint_contents/rectangle.dart';
-import 'paint_contents/simple_line.dart';
-import 'paint_contents/smooth_line.dart';
-import 'paint_contents/straight_line.dart';
 import 'paint_extension/ex_paint.dart';
 
 /// 绘制参数
@@ -201,7 +192,6 @@ class DrawingController extends ChangeNotifier {
 
   /// 是否绘制了有效内容
   bool _isDrawingValidContent = false;
-  void setDrawingValid(bool valid) => _isDrawingValidContent = valid;
 
   /// 获取当前步骤索引
   int get currentIndex => _currentIndex;
@@ -344,7 +334,6 @@ class DrawingController extends ChangeNotifier {
   bool get _isAnyEraser => _paintContent is Eraser || _paintContent is ObjectEraser;
 
   /// 开始绘制
-
   void startDraw(Offset startPoint) {
     if (_currentIndex == 0 && _isAnyEraser) return;
 
@@ -414,6 +403,9 @@ class DrawingController extends ChangeNotifier {
     if (eraserContent != null) {
       _history.add(eraserContent!);
       _currentIndex = _history.length;
+      if (_paintContent is Eraser) {
+        onStrokeAdded?.call(_history.last);
+      }
       eraserContent = null;
     }
 
@@ -464,8 +456,10 @@ class DrawingController extends ChangeNotifier {
   /// 获取图片数据
   Future<ByteData?> getImageData() async {
     try {
-      final RenderRepaintBoundary boundary = painterKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-      final ui.Image image = await boundary.toImage(pixelRatio: View.of(painterKey.currentContext!).devicePixelRatio);
+      final RenderRepaintBoundary boundary =
+          painterKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final ui.Image image =
+          await boundary.toImage(pixelRatio: View.of(painterKey.currentContext!).devicePixelRatio);
       return await image.toByteData(format: ui.ImageByteFormat.png);
     } catch (e) {
       debugPrint('获取图片数据出错:$e');
