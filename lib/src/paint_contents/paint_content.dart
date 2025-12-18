@@ -66,52 +66,66 @@ abstract class PaintContent {
   void onPointerUp(PointerUpEvent e) => endDraw();
   void onPointerCancel(PointerCancelEvent e) => endDraw();
 
-  // ===== Coalesced events compatibility helper =====
+  // =========================
+  // ✅ pressure / coalesced / predicted helpers
+  // =========================
+
+  /// Flutter 3.38：唔一定有 getCoalescedEvents()，
+  /// 而且你可能開咗 implicit-casts: false，所以要用 dynamic + is-check
   static List<PointerEvent> coalescedOf(PointerMoveEvent e) {
-    final dynamic d = e;
-
-    // 有啲版本係 property: e.coalescedEvents
     try {
-      final List? raw = d.coalescedEvents as List?;
-      if (raw != null && raw.isNotEmpty) return raw.cast<PointerEvent>();
-    } catch (_) {}
-
-    // 有啲版本係 method: e.getCoalescedEvents()
-    // ⚠️ 用 dynamic 呼叫先唔會編譯期報錯
-    try {
-      final List? raw = d.getCoalescedEvents() as List?;
-      if (raw != null && raw.isNotEmpty) return raw.cast<PointerEvent>();
-    } catch (_) {}
-
-    return const <PointerEvent>[];
-  }
-
-  // ===== Pressure helpers (also compatible via dynamic) =====
-  static bool isStylus(PointerEvent e) =>
-      e.kind == PointerDeviceKind.stylus || e.kind == PointerDeviceKind.invertedStylus;
-
-  static double normalizedPressure(PointerEvent e) {
-    final dynamic d = e;
-    try {
-      final double p = (d.pressure as num?)?.toDouble() ?? 0.5;
-      final double min = (d.pressureMin as num?)?.toDouble() ?? 0.0;
-      final double max = (d.pressureMax as num?)?.toDouble() ?? 1.0;
-      if (max <= min) return 0.5;
-      return ((p - min) / (max - min)).clamp(0.0, 1.0);
+      final dynamic d = e; // dynamic invocation
+      final dynamic got = d.getCoalescedEvents(); // dynamic result
+      if (got is Iterable) {
+        return got.whereType<PointerEvent>().toList(growable: false);
+      }
+      return const <PointerEvent>[];
     } catch (_) {
-      return 0.5;
+      return const <PointerEvent>[];
     }
   }
 
+  /// ✅ predicted events：iOS（特別係 Pencil）會有；其他平台可能冇
+  /// Flutter 版本差異好大，所以做多個 fallback：
+  /// 1) e.predictedEvents（getter）
+  /// 2) e.getPredictedEvents()（method）
+  static List<PointerEvent> predictedOf(PointerMoveEvent e) {
+    try {
+      // 1) getter
+      final dynamic d = e;
+      final dynamic gotGetter = d.predictedEvents;
+      if (gotGetter is Iterable) {
+        return gotGetter.whereType<PointerEvent>().toList(growable: false);
+      }
+    } catch (_) {}
+    try {
+      // 2) method
+      final dynamic d = e;
+      final dynamic gotMethod = d.getPredictedEvents();
+      if (gotMethod is Iterable) {
+        return gotMethod.whereType<PointerEvent>().toList(growable: false);
+      }
+      return const <PointerEvent>[];
+    } catch (_) {
+      return const <PointerEvent>[];
+    }
+  }
+
+  /// 有真 pressure（通常 stylus）
   static bool hasRealPressure(PointerEvent e) {
-    if (!isStylus(e)) return false;
-    final dynamic d = e;
-    try {
-      final double min = (d.pressureMin as num?)?.toDouble() ?? 0.0;
-      final double max = (d.pressureMax as num?)?.toDouble() ?? 0.0;
-      return max > min;
-    } catch (_) {
-      return false;
-    }
+    final bool stylusLike =
+        e.kind == PointerDeviceKind.stylus || e.kind == PointerDeviceKind.invertedStylus;
+    final double min = e.pressureMin;
+    final double max = e.pressureMax;
+    return stylusLike && (max > min);
+  }
+
+  /// normalize 到 0..1
+  static double normalizedPressure(PointerEvent e) {
+    final double min = e.pressureMin;
+    final double max = e.pressureMax;
+    if (max <= min) return 0.5;
+    final double v = (e.pressure - min) / (max - min);
+    return v.clamp(0.0, 1.0);
   }
 }
