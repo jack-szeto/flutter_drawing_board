@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import '../paint_contents.dart';
 import 'drawing_controller.dart';
 import 'helper/ex_value_builder.dart';
-import 'paint_contents/paint_content.dart';
 
 /// 绘图板
 class Painter extends StatelessWidget {
@@ -46,7 +45,9 @@ class Painter extends StatelessWidget {
       return;
     }
 
-    drawingController.startDraw(pde.localPosition);
+    // drawingController.startDraw(pde.localPosition);
+
+    drawingController.startDrawEvent(pde);
     onPointerDown?.call(pde);
   }
 
@@ -65,7 +66,8 @@ class Painter extends StatelessWidget {
       return;
     }
 
-    drawingController.drawing(pme.localPosition);
+    // drawingController.drawing(pme.localPosition);
+    drawingController.drawingEvent(pme);
     onPointerMove?.call(pme);
   }
 
@@ -76,11 +78,15 @@ class Painter extends StatelessWidget {
       return;
     }
 
+    // if (drawingController.startPoint == pue.localPosition) {
+    //   drawingController.drawing(pue.localPosition);
+    // }
+    // drawingController.endDraw();
     if (drawingController.startPoint == pue.localPosition) {
       drawingController.drawing(pue.localPosition);
     }
+    drawingController.endDrawEvent(pue);
 
-    drawingController.endDraw();
     onPointerUp?.call(pue);
   }
 
@@ -191,7 +197,8 @@ class _DeepPainter extends CustomPainter {
     }
 
     final ui.PictureRecorder recorder = ui.PictureRecorder();
-    final Canvas tempCanvas = Canvas(recorder, Rect.fromPoints(Offset.zero, size.bottomRight(Offset.zero)));
+    final Canvas tempCanvas =
+        Canvas(recorder, Rect.fromPoints(Offset.zero, size.bottomRight(Offset.zero)));
 
     final List<PaintContent> cmds = _buildCmds(controller);
     if (cmds.isEmpty) return;
@@ -275,6 +282,9 @@ class _DeepPainter extends CustomPainter {
       return false;
     }
 
+    if (c is PencilKitLine) {
+      return _hitPolyline(erPts, c.polylinePoints, r + c.paint.strokeWidth / 2);
+    }
     return false;
   }
 

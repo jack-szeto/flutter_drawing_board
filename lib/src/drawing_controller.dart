@@ -237,6 +237,7 @@ class DrawingController extends ChangeNotifier {
     if (t == Circle) return Circle();
     if (t == Eraser) return Eraser();
     if (t == ObjectEraser) return ObjectEraser();
+    if (t == PencilKitLine) return PencilKitLine();
     // default
     return SimpleLine();
   }
@@ -351,6 +352,23 @@ class DrawingController extends ChangeNotifier {
     }
   }
 
+  void startDrawEvent(PointerDownEvent e) {
+    if (_currentIndex == 0 && _isAnyEraser) return;
+
+    _isDrawingValidContent = false;
+    _startPoint = e.localPosition;
+
+    if (_isAnyEraser) {
+      eraserContent = _paintContent.copy();
+      eraserContent?.paint = drawConfig.value.paint.copyWith();
+      eraserContent?.onPointerDown(e);
+    } else {
+      currentContent = _paintContent.copy();
+      currentContent?.paint = drawConfig.value.paint;
+      currentContent?.onPointerDown(e);
+    }
+  }
+
   /// 取消绘制
   void cancelDraw() {
     _startPoint = null;
@@ -375,6 +393,29 @@ class DrawingController extends ChangeNotifier {
       _refreshDeep();
     } else {
       currentContent?.drawing(nowPaint);
+      _refresh();
+    }
+  }
+
+  void drawingEvent(PointerMoveEvent e) {
+    if (!hasPaintingContent) return;
+
+    final nowPaint = e.localPosition;
+
+    // 保留你原本「有效 stroke」判斷
+    if (!_isDrawingValidContent && _startPoint != null) {
+      final dist = (nowPaint - _startPoint!).distance;
+      if (dist >= (kMinStrokeDistance ?? 0)) {
+        _isDrawingValidContent = true;
+      }
+    }
+
+    if (_isAnyEraser) {
+      eraserContent?.onPointerMove(e);
+      _refresh();
+      _refreshDeep();
+    } else {
+      currentContent?.onPointerMove(e);
       _refresh();
     }
   }
@@ -419,6 +460,23 @@ class DrawingController extends ChangeNotifier {
     _refresh();
     _refreshDeep();
     notifyListeners();
+  }
+
+  void endDrawEvent(PointerUpEvent e) {
+    if (!hasPaintingContent) return;
+
+    // 單點 tap：沿用你原本 Painter 嘅補點行為
+    if (_startPoint == e.localPosition) {
+      drawing(e.localPosition);
+    }
+
+    if (_isAnyEraser) {
+      eraserContent?.onPointerUp(e);
+    } else {
+      currentContent?.onPointerUp(e);
+    }
+
+    endDraw(); // 仍用你原本 endDraw 寫入 history / undo redo
   }
 
   /// 撤销
