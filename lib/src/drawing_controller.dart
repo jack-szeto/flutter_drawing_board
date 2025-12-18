@@ -451,6 +451,7 @@ class DrawingController extends ChangeNotifier {
     }
 
     if (currentContent != null) {
+      debugPrint('stroke type = ${currentContent.runtimeType}');
       _history.add(currentContent!);
       _currentIndex = _history.length;
       onStrokeAdded?.call(_history.last);

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart' show debugPrint;
 import 'package:perfect_freehand/perfect_freehand.dart';
 
 import '../paint_extension/ex_paint.dart';
@@ -124,6 +125,8 @@ class PencilKitLine extends PaintContent {
   }
 
   double _pressure01(PointerEvent e) {
+    debugPrint('kind=${e.kind} pressure=${e.pressure} min=${e.pressureMin} max=${e.pressureMax}');
+
     // ✅ 有真 pressure：用 pressure 變粗幼（似 PencilKit）
     if (PaintContent.hasRealPressure(e)) {
       final v = PaintContent.normalizedPressure(e);
