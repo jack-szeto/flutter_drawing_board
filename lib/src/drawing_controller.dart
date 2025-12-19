@@ -313,16 +313,28 @@ class DrawingController extends ChangeNotifier {
 
   /// 添加一条绘制数据
   void addContent(PaintContent content) {
+    // 撤销后继续绘制：截断 redo 尾部
+    final int hisLen = _history.length;
+    if (hisLen > _currentIndex) {
+      _history.removeRange(_currentIndex, hisLen);
+    }
+
     _history.add(content);
-    _currentIndex++;
+    _currentIndex = _history.length;
     cachedImage = null;
     _refreshDeep();
   }
 
   /// 添加多条数据
   void addContents(List<PaintContent> contents) {
+    // 撤销后继续绘制：截断 redo 尾部
+    final int hisLen = _history.length;
+    if (hisLen > _currentIndex) {
+      _history.removeRange(_currentIndex, hisLen);
+    }
+
     _history.addAll(contents);
-    _currentIndex += contents.length;
+    _currentIndex = _history.length;
     cachedImage = null;
     _refreshDeep();
   }
