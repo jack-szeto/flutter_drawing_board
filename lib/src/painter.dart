@@ -165,6 +165,14 @@ class _UpPainter extends CustomPainter {
       canvas.saveLayer(Offset.zero & size, Paint());
       if (controller.cachedImage != null) {
         canvas.drawImage(controller.cachedImage!, Offset.zero, Paint());
+      } else {
+        // 缓存图像还未生成，实时绘制历史内容
+        final List<PaintContent> history = controller.getHistory;
+        for (int i = 0; i < controller.currentIndex; i++) {
+          if (i < history.length) {
+            history[i].draw(canvas, size, false);
+          }
+        }
       }
       controller.eraserContent?.draw(canvas, size, false); // clear path
       canvas.restore();
