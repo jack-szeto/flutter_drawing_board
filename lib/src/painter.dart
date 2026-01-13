@@ -237,6 +237,7 @@ class _DeepPainter extends CustomPainter {
     });
   }
 
+  //object eraser
   bool _hit(PaintContent c, List<Offset> erPts, double r) {
     if (erPts.isEmpty) return false;
 
@@ -256,7 +257,7 @@ class _DeepPainter extends CustomPainter {
       return false;
     }
     if (c is SimpleLine) {
-      return _hitPolyline(erPts, c.path.points, r + c.paint.strokeWidth / 2);
+      return _hitPolyline(erPts, c.hitTestPoints, r + c.paint.strokeWidth / 2);
     }
 
     if (c is SmoothLine) {

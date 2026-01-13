@@ -88,6 +88,14 @@ class SimpleLine extends PaintContent {
   /// Last point position for point filtering optimization
   Offset? _lastPoint;
 
+  //object eraser usage
+  List<Offset> get hitTestPoints {
+    if (useBezierCurve) {
+      return points ?? const <Offset>[];
+    }
+    return path.points;
+  }
+
   @override
   String get contentType => 'SimpleLine';
 
