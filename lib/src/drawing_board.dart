@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import '../paint_contents.dart';
@@ -27,7 +28,7 @@ class DrawingBoard extends StatefulWidget {
     this.controller,
     this.showDefaultActions = false,
     this.showDefaultTools = false,
-    this.paintingEnabled = true,
+    required this.paintingEnabled,
     this.onPointerDown,
     this.onPointerMove,
     this.onPointerUp,
@@ -68,7 +69,7 @@ class DrawingBoard extends StatefulWidget {
   final bool showDefaultTools;
 
   /// 是否启用绘画
-  final bool paintingEnabled;
+  final ValueListenable<bool> paintingEnabled;
 
   /// 开始拖动
   final void Function(PointerDownEvent pde)? onPointerDown;
@@ -305,20 +306,29 @@ class _DrawingBoardState extends State<DrawingBoard> {
           p.size != n.size || p.contentType != n.contentType,
       builder: (_, DrawConfig dc, ___) {
         final bool isPointerTool = dc.contentType == Pointer;
-        final bool disablePainting = !widget.paintingEnabled || isPointerTool;
-        return SizedBox(
+
+        final SizedBox painter = SizedBox(
           width: dc.size?.width,
           height: dc.size?.height,
-          child: IgnorePointer(
-            ignoring: disablePainting, // keep painting, ignore gestures
-            child: Painter(
-              drawingController: _controller,
-              onPointerDown: widget.onPointerDown,
-              onPointerMove: widget.onPointerMove,
-              onPointerUp: widget.onPointerUp,
-              allowedKinds: _kindsFor(widget.writeMode),
-            ),
+          child: Painter(
+            drawingController: _controller,
+            onPointerDown: widget.onPointerDown,
+            onPointerMove: widget.onPointerMove,
+            onPointerUp: widget.onPointerUp,
+            allowedKinds: _kindsFor(widget.writeMode),
           ),
+        );
+
+        return ValueListenableBuilder<bool>(
+          valueListenable: widget.paintingEnabled,
+          child: painter,
+          builder: (_, bool enabled, Widget? child) {
+            final bool disablePainting = !enabled || isPointerTool;
+            return IgnorePointer(
+              ignoring: disablePainting,
+              child: child!,
+            );
+          },
         );
       },
     );
