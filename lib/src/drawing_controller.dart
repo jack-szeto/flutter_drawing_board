@@ -139,6 +139,7 @@ class DrawingController extends ChangeNotifier {
     PaintContent? content,
     this.onStrokeAdded,
     this.kMinStrokeDistance,
+    this.allowEraserOnEmptyHistory = false,
   }) {
     _history = <PaintContent>[];
     _currentIndex = 0;
@@ -149,6 +150,9 @@ class DrawingController extends ChangeNotifier {
   }
   double? kMinStrokeDistance;
 
+  /// classroom mode input-buffer 專用：
+  /// 即使 controller 自己 history 為空，都允許 Eraser / ObjectEraser 開始畫
+  bool allowEraserOnEmptyHistory;
   // callbacks
   final void Function(PaintContent content)? onStrokeAdded;
 
@@ -348,7 +352,7 @@ class DrawingController extends ChangeNotifier {
 
   /// 开始绘制
   void startDraw(Offset startPoint) {
-    if (_currentIndex == 0 && _isAnyEraser) return;
+    if (_currentIndex == 0 && _isAnyEraser && !allowEraserOnEmptyHistory) return;
 
     _isDrawingValidContent = false;
     _startPoint = startPoint;
@@ -365,7 +369,7 @@ class DrawingController extends ChangeNotifier {
   }
 
   void startDrawEvent(PointerDownEvent e) {
-    if (_currentIndex == 0 && _isAnyEraser) return;
+    if (_currentIndex == 0 && _isAnyEraser && !allowEraserOnEmptyHistory) return;
 
     _isDrawingValidContent = false;
     _startPoint = e.localPosition;
@@ -456,7 +460,7 @@ class DrawingController extends ChangeNotifier {
     if (eraserContent != null) {
       _history.add(eraserContent!);
       _currentIndex = _history.length;
-      if (_paintContent is Eraser) {
+      if (_paintContent is Eraser || _paintContent is ObjectEraser) {
         onStrokeAdded?.call(_history.last);
       }
       eraserContent = null;
