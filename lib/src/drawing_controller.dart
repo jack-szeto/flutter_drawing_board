@@ -153,6 +153,7 @@ class DrawingController extends ChangeNotifier {
   /// classroom mode input-buffer 專用：
   /// 即使 controller 自己 history 為空，都允許 Eraser / ObjectEraser 開始畫
   bool allowEraserOnEmptyHistory;
+
   // callbacks
   final void Function(PaintContent content)? onStrokeAdded;
 
@@ -174,7 +175,7 @@ class DrawingController extends ChangeNotifier {
   /// 橡皮擦内容
   PaintContent? eraserContent;
 
-  ui.Image? cachedImage;
+  ui.Picture? cachedPicture;
 
   /// 底层绘制内容(绘制记录)
   late List<PaintContent> _history;
@@ -296,7 +297,7 @@ class DrawingController extends ChangeNotifier {
 
   /// 完整替换历史 + 可视索引（用于精确还原）
   void setHistoryAndIndex(List<PaintContent> history, int index) {
-    cachedImage = null;
+    cachedPicture = null;
     _history
       ..clear()
       ..addAll(history);
@@ -307,7 +308,7 @@ class DrawingController extends ChangeNotifier {
 
   /// Replace drawing contents from a list at once（保持全部可见）
   void replaceAllContents(List<PaintContent> contents) {
-    cachedImage = null;
+    cachedPicture = null;
     _history
       ..clear()
       ..addAll(contents);
@@ -325,7 +326,7 @@ class DrawingController extends ChangeNotifier {
 
     _history.add(content);
     _currentIndex = _history.length;
-    cachedImage = null;
+    cachedPicture = null;
     _refreshDeep();
   }
 
@@ -339,7 +340,7 @@ class DrawingController extends ChangeNotifier {
 
     _history.addAll(contents);
     _currentIndex = _history.length;
-    cachedImage = null;
+    cachedPicture = null;
     _refreshDeep();
   }
 
@@ -498,7 +499,7 @@ class DrawingController extends ChangeNotifier {
 
   /// 撤销
   void undo() {
-    cachedImage = null;
+    cachedPicture = null;
     if (_currentIndex > 0) {
       _currentIndex = _currentIndex - 1;
       _refreshDeep();
@@ -510,7 +511,7 @@ class DrawingController extends ChangeNotifier {
 
   /// 重做
   void redo() {
-    cachedImage = null;
+    cachedPicture = null;
     if (_currentIndex < _history.length) {
       _currentIndex = _currentIndex + 1;
       _refreshDeep();
@@ -522,7 +523,7 @@ class DrawingController extends ChangeNotifier {
 
   /// 清理画布
   void clear() {
-    cachedImage = null;
+    cachedPicture = null;
     _history.clear();
     _currentIndex = 0;
     _refreshDeep();
@@ -545,10 +546,20 @@ class DrawingController extends ChangeNotifier {
   /// 获取表层图片数据
   Future<ByteData?> getSurfaceImageData() async {
     try {
-      if (cachedImage != null) {
-        return await cachedImage!.toByteData(format: ui.ImageByteFormat.png);
+      final ui.Picture? picture = cachedPicture;
+      final Size? size = drawConfig.value.size;
+
+      if (picture == null || size == null || size.isEmpty) {
+        return null;
       }
-      return null;
+
+      final ui.Image image = await picture.toImage(
+        size.width.ceil(),
+        size.height.ceil(),
+      );
+      final ByteData? data = await image.toByteData(format: ui.ImageByteFormat.png);
+      image.dispose();
+      return data;
     } catch (e) {
       debugPrint('获取表层图片数据出错:$e');
       return null;

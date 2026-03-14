@@ -163,8 +163,8 @@ class _UpPainter extends CustomPainter {
 
     if (controller.eraserContent is Eraser) {
       canvas.saveLayer(Offset.zero & size, Paint());
-      if (controller.cachedImage != null) {
-        canvas.drawImage(controller.cachedImage!, Offset.zero, Paint());
+      if (controller.cachedPicture != null) {
+        canvas.drawPicture(controller.cachedPicture!);
       } else {
         // 缓存图像还未生成，实时绘制历史内容
         final List<PaintContent> history = controller.getHistory;
@@ -231,10 +231,7 @@ class _DeepPainter extends CustomPainter {
 
     canvas.restore();
 
-    final ui.Picture picture = recorder.endRecording();
-    picture.toImage(size.width.toInt(), size.height.toInt()).then((ui.Image value) {
-      controller.cachedImage = value;
-    });
+    controller.cachedPicture = recorder.endRecording();
   }
 
   //object eraser
