@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -433,7 +432,9 @@ class DrawingController extends ChangeNotifier {
     }
 
     currentContent?.drawing(nowPaint);
-    _refreshSurfacePerFrame();
+
+    // 普通书写：即时刷新，不等下一帧
+    _refresh();
   }
 
   void drawingEvent(PointerMoveEvent e) {
@@ -462,7 +463,9 @@ class DrawingController extends ChangeNotifier {
     }
 
     currentContent?.onPointerMove(e);
-    _refreshSurfacePerFrame();
+
+    // 普通书写：即时刷新，不等下一帧
+    _refresh();
   }
 
   /// 结束绘制
