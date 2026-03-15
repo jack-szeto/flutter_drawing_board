@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../paint_contents.dart';
 import 'helper/safe_value_notifier.dart';
@@ -148,6 +150,7 @@ class DrawingController extends ChangeNotifier {
     drawConfig = SafeValueNotifier<DrawConfig>(config ?? DrawConfig.def(contentType: SimpleLine));
     setPaintContent(content ?? SimpleLine());
   }
+
   double? kMinStrokeDistance;
 
   /// classroom mode input-buffer 專用：
@@ -182,6 +185,9 @@ class DrawingController extends ChangeNotifier {
 
   /// 当前controller是否存在
   bool _mounted = true;
+
+  bool _surfaceRefreshQueued = false;
+  bool _deepRefreshQueued = false;
 
   /// 获取绘制图层/历史
   List<PaintContent> get getHistory => _history;
@@ -243,7 +249,6 @@ class DrawingController extends ChangeNotifier {
     if (t == Eraser) return Eraser();
     if (t == ObjectEraser) return ObjectEraser();
     if (t == PencilKitLine) return PencilKitLine();
-    // default
     return SimpleLine();
   }
 
@@ -295,9 +300,21 @@ class DrawingController extends ChangeNotifier {
     drawConfig.value = drawConfig.value.copyWith(contentType: content.runtimeType);
   }
 
+  void replaceCachedPicture(ui.Picture? picture) {
+    if (identical(cachedPicture, picture)) {
+      return;
+    }
+    cachedPicture?.dispose();
+    cachedPicture = picture;
+  }
+
+  void clearCachedPicture() {
+    replaceCachedPicture(null);
+  }
+
   /// 完整替换历史 + 可视索引（用于精确还原）
   void setHistoryAndIndex(List<PaintContent> history, int index) {
-    cachedPicture = null;
+    clearCachedPicture();
     _history
       ..clear()
       ..addAll(history);
@@ -308,7 +325,7 @@ class DrawingController extends ChangeNotifier {
 
   /// Replace drawing contents from a list at once（保持全部可见）
   void replaceAllContents(List<PaintContent> contents) {
-    cachedPicture = null;
+    clearCachedPicture();
     _history
       ..clear()
       ..addAll(contents);
@@ -318,7 +335,6 @@ class DrawingController extends ChangeNotifier {
 
   /// 添加一条绘制数据
   void addContent(PaintContent content) {
-    // 撤销后继续绘制：截断 redo 尾部
     final int hisLen = _history.length;
     if (hisLen > _currentIndex) {
       _history.removeRange(_currentIndex, hisLen);
@@ -326,13 +342,12 @@ class DrawingController extends ChangeNotifier {
 
     _history.add(content);
     _currentIndex = _history.length;
-    cachedPicture = null;
+    clearCachedPicture();
     _refreshDeep();
   }
 
   /// 添加多条数据
   void addContents(List<PaintContent> contents) {
-    // 撤销后继续绘制：截断 redo 尾部
     final int hisLen = _history.length;
     if (hisLen > _currentIndex) {
       _history.removeRange(_currentIndex, hisLen);
@@ -340,7 +355,7 @@ class DrawingController extends ChangeNotifier {
 
     _history.addAll(contents);
     _currentIndex = _history.length;
-    cachedPicture = null;
+    clearCachedPicture();
     _refreshDeep();
   }
 
@@ -393,48 +408,61 @@ class DrawingController extends ChangeNotifier {
     eraserContent = null;
   }
 
-  /// 正在绘制
+  /// 正在绘制（旧 Offset API）
   void drawing(Offset nowPaint) {
     if (!hasPaintingContent) return;
 
     if (!_isDrawingValidContent && _startPoint != null) {
-      final dist = (nowPaint - _startPoint!).distance;
+      final double dist = (nowPaint - _startPoint!).distance;
       if (dist >= (kMinStrokeDistance ?? 0)) {
         _isDrawingValidContent = true;
       }
     }
 
-    if (_isAnyEraser) {
+    if (_paintContent is ObjectEraser) {
       eraserContent?.drawing(nowPaint);
-      _refresh();
-      _refreshDeep();
-    } else {
-      currentContent?.drawing(nowPaint);
-      _refresh();
+      _refreshSurfacePerFrame();
+      _refreshDeepPerFrame();
+      return;
     }
+
+    if (_paintContent is Eraser) {
+      eraserContent?.drawing(nowPaint);
+      _refreshSurfacePerFrame();
+      return;
+    }
+
+    currentContent?.drawing(nowPaint);
+    _refreshSurfacePerFrame();
   }
 
   void drawingEvent(PointerMoveEvent e) {
     if (!hasPaintingContent) return;
 
-    final nowPaint = e.localPosition;
+    final Offset nowPaint = e.localPosition;
 
-    // 保留你原本「有效 stroke」判斷
     if (!_isDrawingValidContent && _startPoint != null) {
-      final dist = (nowPaint - _startPoint!).distance;
+      final double dist = (nowPaint - _startPoint!).distance;
       if (dist >= (kMinStrokeDistance ?? 0)) {
         _isDrawingValidContent = true;
       }
     }
 
-    if (_isAnyEraser) {
+    if (_paintContent is ObjectEraser) {
       eraserContent?.onPointerMove(e);
-      _refresh();
-      _refreshDeep();
-    } else {
-      currentContent?.onPointerMove(e);
-      _refresh();
+      _refreshSurfacePerFrame();
+      _refreshDeepPerFrame();
+      return;
     }
+
+    if (_paintContent is Eraser) {
+      eraserContent?.onPointerMove(e);
+      _refreshSurfacePerFrame();
+      return;
+    }
+
+    currentContent?.onPointerMove(e);
+    _refreshSurfacePerFrame();
   }
 
   /// 结束绘制
@@ -453,7 +481,6 @@ class DrawingController extends ChangeNotifier {
     _startPoint = null;
     final int hisLen = _history.length;
 
-    // 撤销后继续绘制：截断 redo 尾部
     if (hisLen > _currentIndex) {
       _history.removeRange(_currentIndex, hisLen);
     }
@@ -468,7 +495,6 @@ class DrawingController extends ChangeNotifier {
     }
 
     if (currentContent != null) {
-      // debugPrint('stroke type = ${currentContent.runtimeType}');
       _history.add(currentContent!);
       _currentIndex = _history.length;
       onStrokeAdded?.call(_history.last);
@@ -483,7 +509,6 @@ class DrawingController extends ChangeNotifier {
   void endDrawEvent(PointerUpEvent e) {
     if (!hasPaintingContent) return;
 
-    // 單點 tap：沿用你原本 Painter 嘅補點行為
     if (_startPoint == e.localPosition) {
       drawing(e.localPosition);
     }
@@ -494,12 +519,12 @@ class DrawingController extends ChangeNotifier {
       currentContent?.onPointerUp(e);
     }
 
-    endDraw(); // 仍用你原本 endDraw 寫入 history / undo redo
+    endDraw();
   }
 
   /// 撤销
   void undo() {
-    cachedPicture = null;
+    clearCachedPicture();
     if (_currentIndex > 0) {
       _currentIndex = _currentIndex - 1;
       _refreshDeep();
@@ -511,7 +536,7 @@ class DrawingController extends ChangeNotifier {
 
   /// 重做
   void redo() {
-    cachedPicture = null;
+    clearCachedPicture();
     if (_currentIndex < _history.length) {
       _currentIndex = _currentIndex + 1;
       _refreshDeep();
@@ -523,7 +548,7 @@ class DrawingController extends ChangeNotifier {
 
   /// 清理画布
   void clear() {
-    cachedPicture = null;
+    clearCachedPicture();
     _history.clear();
     _currentIndex = 0;
     _refreshDeep();
@@ -536,7 +561,9 @@ class DrawingController extends ChangeNotifier {
           painterKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
       final ui.Image image =
           await boundary.toImage(pixelRatio: View.of(painterKey.currentContext!).devicePixelRatio);
-      return await image.toByteData(format: ui.ImageByteFormat.png);
+      final ByteData? data = await image.toByteData(format: ui.ImageByteFormat.png);
+      image.dispose();
+      return data;
     } catch (e) {
       debugPrint('获取图片数据出错:$e');
       return null;
@@ -571,6 +598,30 @@ class DrawingController extends ChangeNotifier {
     return _history.map((PaintContent e) => e.toJson()).toList();
   }
 
+  void _refreshSurfacePerFrame() {
+    if (_surfaceRefreshQueued || !_mounted) {
+      return;
+    }
+    _surfaceRefreshQueued = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _surfaceRefreshQueued = false;
+      if (!_mounted) return;
+      _refresh();
+    });
+  }
+
+  void _refreshDeepPerFrame() {
+    if (_deepRefreshQueued || !_mounted) {
+      return;
+    }
+    _deepRefreshQueued = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _deepRefreshQueued = false;
+      if (!_mounted) return;
+      _refreshDeep();
+    });
+  }
+
   /// 刷新表层画板
   void _refresh() {
     painter?._refresh();
@@ -586,6 +637,7 @@ class DrawingController extends ChangeNotifier {
   void dispose() {
     if (!_mounted) return;
 
+    clearCachedPicture();
     drawConfig.dispose();
     realPainter?.dispose();
     painter?.dispose();

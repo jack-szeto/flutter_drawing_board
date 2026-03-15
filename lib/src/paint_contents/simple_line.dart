@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/painting.dart';
 
 import '../draw_path/draw_path.dart';
@@ -10,24 +11,9 @@ import 'paint_content.dart';
 /// 支持两种绘制模式：
 /// 1. 传统路径模式：直接连接绘制点
 /// 2. 贝塞尔曲线模式：使用二次贝塞尔曲线平滑连接，提供更流畅的线条效果
-///
-/// Simple Line Drawing Content
-///
-/// Supports two drawing modes:
-/// 1. Traditional path mode: directly connects drawing points
-/// 2. Bezier curve mode: uses quadratic bezier curves for smooth connection, providing smoother line effects
 class SimpleLine extends PaintContent {
   SimpleLine({
-    /// 最小点距离，用于过滤过近的点，减少数据量
-    ///
-    /// Minimum point distance for filtering points that are too close, reducing data volume
     this.minPointDistance = 2.0,
-
-    /// 是否使用贝塞尔曲线平滑，默认 true
-    /// 设置为 true 可以解决快速绘制时的折线感问题
-    ///
-    /// Whether to use bezier curve smoothing, default true
-    /// Setting to true resolves the jagged line issue when drawing quickly
     this.useBezierCurve = true,
   });
 
@@ -38,10 +24,14 @@ class SimpleLine extends PaintContent {
     DrawPath? path,
     required Paint paint,
   })  : path = path ?? DrawPath(),
-        super.paint(paint);
+        super.paint(paint) {
+    if (useBezierCurve) {
+      points ??= <Offset>[];
+      _rebuildFinalBezierPathFromPoints();
+    }
+  }
 
   factory SimpleLine.fromJson(Map<String, dynamic> data) {
-    // 兼容旧版本：如果有 points 就用新方式，否则用旧方式
     final bool hasPoints = data.containsKey('points');
 
     if (hasPoints) {
@@ -54,9 +44,9 @@ class SimpleLine extends PaintContent {
         paint: jsonToPaint(data['paint'] as Map<String, dynamic>),
       );
     } else {
-      // 旧版本兼容
       return SimpleLine.data(
         minPointDistance: (data['minPointDistance'] ?? 0.0) as double,
+        useBezierCurve: (data['useBezierCurve'] ?? false) as bool,
         path: DrawPath.fromJson(data['path'] as Map<String, dynamic>),
         paint: jsonToPaint(data['paint'] as Map<String, dynamic>),
       );
@@ -64,31 +54,33 @@ class SimpleLine extends PaintContent {
   }
 
   /// 最小点距离
-  ///
-  /// Minimum point distance
   final double minPointDistance;
 
   /// 是否使用贝塞尔曲线
-  ///
-  /// Whether to use bezier curve
   final bool useBezierCurve;
 
-  /// 绘制路径（为了向后兼容保留，用于传统路径模式）
-  ///
-  /// Drawing path (retained for backward compatibility, used in traditional path mode)
+  /// 传统路径模式用
   DrawPath path = DrawPath();
 
-  /// 绘制点列表（用于贝塞尔曲线模式）
-  ///
-  /// Drawing points list (used in bezier curve mode)
+  /// 贝塞尔模式用：真实采样点（会序列化）
   List<Offset>? points;
 
-  /// 上一个点的位置，用于点过滤优化
-  ///
-  /// Last point position for point filtering optimization
+  /// 上一个真实点的位置，用于点过滤
   Offset? _lastPoint;
 
-  //object eraser usage
+  /// 已确认的渲染 path（不会每帧从头重建）
+  Path _renderPath = Path();
+
+  /// 实时尾巴（当前真实末端 + predicted 末端）
+  Path _tailPath = Path();
+
+  /// 已确认 path 当前结束位置（通常是上一个 midpoint）
+  Offset? _lastMidPoint;
+
+  /// predicted 点（只用于预览，不写入 history / json）
+  List<Offset> _predictedPoints = <Offset>[];
+
+  // object eraser usage
   List<Offset> get hitTestPoints {
     if (useBezierCurve) {
       return points ?? const <Offset>[];
@@ -102,33 +94,32 @@ class SimpleLine extends PaintContent {
   @override
   void startDraw(Offset startPoint) {
     _lastPoint = startPoint;
+    _predictedPoints = <Offset>[];
+    _lastMidPoint = null;
+    _renderPath = Path();
+    _tailPath = Path();
 
     if (useBezierCurve) {
-      // 使用点列表模式
       points = <Offset>[startPoint];
+      _renderPath.moveTo(startPoint.dx, startPoint.dy);
     } else {
-      // 使用传统路径模式
+      path = DrawPath();
       path.moveTo(startPoint.dx, startPoint.dy);
     }
   }
 
   @override
   void drawing(Offset nowPoint) {
-    // 点过滤优化：跳过距离过近的点
     if (_lastPoint != null) {
       final double distance = (nowPoint - _lastPoint!).distance;
-
-      // 如果距离小于最小点距离，跳过此点
       if (distance < minPointDistance) {
         return;
       }
     }
 
     if (useBezierCurve) {
-      // 添加到点列表
-      points?.add(nowPoint);
+      _appendRealPoint(nowPoint);
     } else {
-      // 添加到路径
       path.lineTo(nowPoint.dx, nowPoint.dy);
     }
 
@@ -136,65 +127,227 @@ class SimpleLine extends PaintContent {
   }
 
   @override
+  void onPointerMove(PointerMoveEvent e) {
+    if (!useBezierCurve) {
+      super.onPointerMove(e);
+      return;
+    }
+
+    final List<PointerEvent> events = PaintContent.coalescedOf(e);
+    if (events.isNotEmpty) {
+      for (final PointerEvent pe in events) {
+        drawing(pe.localPosition);
+      }
+    } else {
+      drawing(e.localPosition);
+    }
+
+    _updatePredictedPoints(
+      PaintContent.predictedOf(e).map((PointerEvent pe) => pe.localPosition).toList(),
+    );
+  }
+
+  @override
+  void endDraw() {
+    if (!useBezierCurve) {
+      return;
+    }
+
+    _predictedPoints = <Offset>[];
+
+    final List<Offset>? pts = points;
+    if (pts == null || pts.isEmpty) {
+      _tailPath = Path();
+      return;
+    }
+
+    if (pts.length == 1) {
+      _tailPath = Path();
+      return;
+    }
+
+    final Offset last = pts.last;
+    _renderPath.quadraticBezierTo(last.dx, last.dy, last.dx, last.dy);
+    _tailPath = Path();
+    _lastMidPoint = last;
+  }
+
+  @override
   void draw(Canvas canvas, Size size, bool deeper) {
     if (useBezierCurve && points != null && points!.isNotEmpty) {
-      // 使用贝塞尔曲线绘制
-      _drawWithBezierCurve(canvas);
+      _drawIncrementalBezier(canvas);
     } else {
-      // 使用传统路径绘制
       canvas.drawPath(path.path, paint);
     }
   }
 
-  /// 使用贝塞尔曲线绘制平滑线条
-  ///
-  /// Draw smooth lines using bezier curves
-  void _drawWithBezierCurve(Canvas canvas) {
+  void _drawIncrementalBezier(Canvas canvas) {
     if (points == null || points!.isEmpty) {
       return;
     }
 
     if (points!.length == 1) {
-      // 单点绘制为小圆点
-      canvas.drawCircle(points![0], paint.strokeWidth / 8, paint);
+      canvas.drawCircle(points!.first, paint.strokeWidth / 8, paint);
       return;
     }
 
-    final Path bezierPath = Path();
-    bezierPath.moveTo(points![0].dx, points![0].dy);
+    canvas.drawPath(_renderPath, paint);
+    canvas.drawPath(_tailPath, paint);
+  }
 
-    if (points!.length == 2) {
-      // 两点直接连线
-      bezierPath.lineTo(points![1].dx, points![1].dy);
-    } else {
-      // 使用二次贝塞尔曲线连接点
-      for (int i = 1; i < points!.length - 1; i++) {
-        final Offset p0 = points![i];
-        final Offset p1 = points![i + 1];
+  void _appendRealPoint(Offset p) {
+    points ??= <Offset>[];
 
-        // 计算中点作为终点
-        final Offset midPoint = Offset(
-          (p0.dx + p1.dx) / 2,
-          (p0.dy + p1.dy) / 2,
-        );
-
-        // 使用当前点作为控制点，中点作为终点
-        bezierPath.quadraticBezierTo(p0.dx, p0.dy, midPoint.dx, midPoint.dy);
-      }
-
-      // 绘制最后一段 - 使用贝塞尔曲线避免折角
-      final Offset lastPoint = points!.last;
-      final Offset secondLastPoint = points![points!.length - 2];
-
-      bezierPath.quadraticBezierTo(
-        secondLastPoint.dx,
-        secondLastPoint.dy,
-        lastPoint.dx,
-        lastPoint.dy,
-      );
+    if (points!.isEmpty) {
+      points!.add(p);
+      _renderPath.moveTo(p.dx, p.dy);
+      _lastMidPoint = null;
+      _predictedPoints = <Offset>[];
+      _rebuildTailPath();
+      return;
     }
 
-    canvas.drawPath(bezierPath, paint);
+    if (points!.length == 1) {
+      final Offset first = points!.first;
+      points!.add(p);
+
+      final Offset mid = _midPoint(first, p);
+      _renderPath.lineTo(mid.dx, mid.dy);
+      _lastMidPoint = mid;
+      _predictedPoints = <Offset>[];
+      _rebuildTailPath();
+      return;
+    }
+
+    final Offset prev = points!.last;
+    points!.add(p);
+
+    final Offset mid = _midPoint(prev, p);
+    _renderPath.quadraticBezierTo(prev.dx, prev.dy, mid.dx, mid.dy);
+    _lastMidPoint = mid;
+    _predictedPoints = <Offset>[];
+    _rebuildTailPath();
+  }
+
+  void _updatePredictedPoints(List<Offset> rawPredicted) {
+    if (!useBezierCurve) {
+      return;
+    }
+
+    final List<Offset>? pts = points;
+    if (pts == null || pts.isEmpty) {
+      _predictedPoints = <Offset>[];
+      _tailPath = Path();
+      return;
+    }
+
+    final List<Offset> filtered = <Offset>[];
+    Offset anchor = pts.last;
+
+    for (final Offset p in rawPredicted) {
+      if ((p - anchor).distance < minPointDistance) {
+        continue;
+      }
+      if (filtered.isNotEmpty && (p - filtered.last).distance < minPointDistance) {
+        continue;
+      }
+      filtered.add(p);
+      anchor = p;
+    }
+
+    _predictedPoints = filtered;
+    _rebuildTailPath();
+  }
+
+  void _rebuildTailPath() {
+    _tailPath = Path();
+
+    final List<Offset>? pts = points;
+    if (!useBezierCurve || pts == null || pts.isEmpty) {
+      return;
+    }
+
+    if (pts.length == 1) {
+      return;
+    }
+
+    final Offset start = _lastMidPoint ?? pts.first;
+    final List<Offset> tailPts = <Offset>[
+      pts.last,
+      ..._predictedPoints,
+    ];
+
+    if (tailPts.isEmpty) {
+      return;
+    }
+
+    _tailPath.moveTo(start.dx, start.dy);
+
+    if (tailPts.length == 1) {
+      final Offset p = tailPts.first;
+      _tailPath.quadraticBezierTo(p.dx, p.dy, p.dx, p.dy);
+      return;
+    }
+
+    for (int i = 0; i < tailPts.length - 1; i++) {
+      final Offset control = tailPts[i];
+      final Offset end = _midPoint(control, tailPts[i + 1]);
+      _tailPath.quadraticBezierTo(control.dx, control.dy, end.dx, end.dy);
+    }
+
+    final Offset last = tailPts.last;
+    _tailPath.quadraticBezierTo(last.dx, last.dy, last.dx, last.dy);
+  }
+
+  void _rebuildFinalBezierPathFromPoints() {
+    _renderPath = Path();
+    _tailPath = Path();
+    _predictedPoints = <Offset>[];
+
+    final List<Offset>? pts = points;
+    if (pts == null || pts.isEmpty) {
+      _lastMidPoint = null;
+      _lastPoint = null;
+      return;
+    }
+
+    _renderPath.moveTo(pts.first.dx, pts.first.dy);
+
+    if (pts.length == 1) {
+      _lastMidPoint = null;
+      _lastPoint = pts.first;
+      return;
+    }
+
+    if (pts.length == 2) {
+      final Offset mid = _midPoint(pts[0], pts[1]);
+      _renderPath.lineTo(mid.dx, mid.dy);
+      _renderPath.quadraticBezierTo(pts[1].dx, pts[1].dy, pts[1].dx, pts[1].dy);
+      _lastMidPoint = pts[1];
+      _lastPoint = pts.last;
+      return;
+    }
+
+    final Offset firstMid = _midPoint(pts[0], pts[1]);
+    _renderPath.lineTo(firstMid.dx, firstMid.dy);
+
+    for (int i = 1; i < pts.length - 1; i++) {
+      final Offset control = pts[i];
+      final Offset end = _midPoint(control, pts[i + 1]);
+      _renderPath.quadraticBezierTo(control.dx, control.dy, end.dx, end.dy);
+    }
+
+    final Offset last = pts.last;
+    _renderPath.quadraticBezierTo(last.dx, last.dy, last.dx, last.dy);
+    _lastMidPoint = last;
+    _lastPoint = last;
+  }
+
+  Offset _midPoint(Offset a, Offset b) {
+    return Offset(
+      (a.dx + b.dx) / 2,
+      (a.dy + b.dy) / 2,
+    );
   }
 
   @override
@@ -206,7 +359,6 @@ class SimpleLine extends PaintContent {
   @override
   Map<String, dynamic> toContentJson() {
     if (useBezierCurve && points != null) {
-      // 新格式：保存点列表
       return <String, dynamic>{
         'minPointDistance': minPointDistance,
         'useBezierCurve': useBezierCurve,
@@ -214,7 +366,6 @@ class SimpleLine extends PaintContent {
         'paint': paint.toJson(),
       };
     } else {
-      // 旧格式：保存路径（向后兼容）
       return <String, dynamic>{
         'minPointDistance': minPointDistance,
         'useBezierCurve': useBezierCurve,

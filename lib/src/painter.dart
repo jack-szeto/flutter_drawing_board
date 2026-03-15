@@ -45,8 +45,6 @@ class Painter extends StatelessWidget {
       return;
     }
 
-    // drawingController.startDraw(pde.localPosition);
-
     drawingController.startDrawEvent(pde);
     onPointerDown?.call(pde);
   }
@@ -58,7 +56,6 @@ class Painter extends StatelessWidget {
       if (drawingController.hasPaintingContent) {
         drawingController.endDraw();
       }
-
       return;
     }
 
@@ -66,7 +63,6 @@ class Painter extends StatelessWidget {
       return;
     }
 
-    // drawingController.drawing(pme.localPosition);
     drawingController.drawingEvent(pme);
     onPointerMove?.call(pme);
   }
@@ -78,10 +74,6 @@ class Painter extends StatelessWidget {
       return;
     }
 
-    // if (drawingController.startPoint == pue.localPosition) {
-    //   drawingController.drawing(pue.localPosition);
-    // }
-    // drawingController.endDraw();
     if (drawingController.startPoint == pue.localPosition) {
       drawingController.drawing(pue.localPosition);
     }
@@ -113,12 +105,10 @@ class Painter extends StatelessWidget {
       onPointerMove: _onPointerMove,
       onPointerUp: _onPointerUp,
       onPointerCancel: _onPointerCancel,
-      // behavior: HitTestBehavior.opaque,
       child: ExValueBuilder<DrawConfig>(
         valueListenable: drawingController.drawConfig,
         shouldRebuild: (DrawConfig p, DrawConfig n) => p.fingerCount != n.fingerCount,
         builder: (_, DrawConfig config, Widget? child) {
-          // 是否能拖动画布
           final bool isPanEnabled = config.fingerCount > 1;
           final bool touchWrites = allowedKinds?.contains(PointerDeviceKind.touch) ?? false;
 
@@ -163,10 +153,10 @@ class _UpPainter extends CustomPainter {
 
     if (controller.eraserContent is Eraser) {
       canvas.saveLayer(Offset.zero & size, Paint());
+
       if (controller.cachedPicture != null) {
         canvas.drawPicture(controller.cachedPicture!);
       } else {
-        // 缓存图像还未生成，实时绘制历史内容
         final List<PaintContent> history = controller.getHistory;
         for (int i = 0; i < controller.currentIndex; i++) {
           if (i < history.length) {
@@ -174,18 +164,17 @@ class _UpPainter extends CustomPainter {
           }
         }
       }
-      controller.eraserContent?.draw(canvas, size, false); // clear path
+
+      controller.eraserContent?.draw(canvas, size, false);
       canvas.restore();
       return;
     }
 
-    // ObjectEraser：唔好畫 cachedImage（可選：畫提示線）
+    // ObjectEraser：預覽走 deep layer，這裡可不畫
     if (controller.eraserContent is ObjectEraser) {
-      // optional: controller.eraserContent?.draw(canvas, size, false);
       return;
     }
 
-    // 正常畫筆
     controller.currentContent?.draw(canvas, size, false);
   }
 
@@ -196,6 +185,7 @@ class _UpPainter extends CustomPainter {
 /// 底层画板
 class _DeepPainter extends CustomPainter {
   _DeepPainter({required this.controller}) : super(repaint: controller.realPainter);
+
   final DrawingController controller;
 
   @override
@@ -209,7 +199,10 @@ class _DeepPainter extends CustomPainter {
         Canvas(recorder, Rect.fromPoints(Offset.zero, size.bottomRight(Offset.zero)));
 
     final List<PaintContent> cmds = _buildCmds(controller);
-    if (cmds.isEmpty) return;
+    if (cmds.isEmpty) {
+      controller.clearCachedPicture();
+      return;
+    }
 
     final List<bool> keep = _computeKeep(cmds);
 
@@ -222,7 +215,7 @@ class _DeepPainter extends CustomPainter {
         continue;
       }
       if (cmd is ObjectEraser) {
-        continue; // 物件擦除唔畫任何像素
+        continue;
       }
 
       cmd.draw(canvas, size, true);
@@ -231,10 +224,9 @@ class _DeepPainter extends CustomPainter {
 
     canvas.restore();
 
-    controller.cachedPicture = recorder.endRecording();
+    controller.replaceCachedPicture(recorder.endRecording());
   }
 
-  //object eraser
   bool _hit(PaintContent c, List<Offset> erPts, double r) {
     if (erPts.isEmpty) return false;
 
@@ -253,6 +245,7 @@ class _DeepPainter extends CustomPainter {
       }
       return false;
     }
+
     if (c is SimpleLine) {
       return _hitPolyline(erPts, c.hitTestPoints, r + c.paint.strokeWidth / 2);
     }
@@ -291,12 +284,14 @@ class _DeepPainter extends CustomPainter {
     if (c is PencilKitLine) {
       return _hitPolyline(erPts, c.polylinePoints, r + c.paint.strokeWidth / 2);
     }
+
     return false;
   }
 
   bool _hitPolyline(List<Offset> erPts, List<Offset> pts, double r) {
     if (pts.length < 2) return false;
-    for (final p in erPts) {
+
+    for (final Offset p in erPts) {
       for (int i = 0; i < pts.length - 1; i++) {
         if (_distToSeg(p, pts[i], pts[i + 1]) <= r) return true;
       }
@@ -305,43 +300,49 @@ class _DeepPainter extends CustomPainter {
   }
 
   double _distToSeg(Offset p, Offset a, Offset b) {
-    final ab = b - a;
-    final ap = p - a;
-    final ab2 = ab.dx * ab.dx + ab.dy * ab.dy;
+    final Offset ab = b - a;
+    final Offset ap = p - a;
+    final double ab2 = ab.dx * ab.dx + ab.dy * ab.dy;
     if (ab2 == 0) return (p - a).distance;
-    final t = ((ap.dx * ab.dx) + (ap.dy * ab.dy)) / ab2;
-    final tt = t.clamp(0.0, 1.0);
-    final c = Offset(a.dx + ab.dx * tt, a.dy + ab.dy * tt);
+
+    final double t = ((ap.dx * ab.dx) + (ap.dy * ab.dy)) / ab2;
+    final double tt = t.clamp(0.0, 1.0);
+    final Offset c = Offset(a.dx + ab.dx * tt, a.dy + ab.dy * tt);
     return (p - c).distance;
   }
 
   List<PaintContent> _buildCmds(DrawingController c) {
     final List<PaintContent> cmds = <PaintContent>[];
+
     for (int i = 0; i < c.currentIndex; i++) {
       cmds.add(c.getHistory[i]);
     }
+
     if (c.eraserContent is ObjectEraser) {
-      cmds.add(c.eraserContent!); // ✅ 讓拖緊時即時見到效果
+      cmds.add(c.eraserContent!);
     }
+
     return cmds;
   }
 
   List<bool> _computeKeep(List<PaintContent> cmds) {
-    final keep = List<bool>.filled(cmds.length, true);
+    final List<bool> keep = List<bool>.filled(cmds.length, true);
 
     for (int i = 0; i < cmds.length; i++) {
-      final cmd = cmds[i];
+      final PaintContent cmd = cmds[i];
       if (cmd is! ObjectEraser) continue;
 
-      final erPts = cmd.drawPath.points; // ✅ 下面 E) 會講點加
-      final r = (cmd.paint.strokeWidth <= 0 ? 10.0 : cmd.paint.strokeWidth / 2);
+      final List<Offset> erPts = cmd.drawPath.points;
+      final double r = (cmd.paint.strokeWidth <= 0 ? 10.0 : cmd.paint.strokeWidth / 2);
 
       for (int j = 0; j < i; j++) {
         if (!keep[j]) continue;
 
-        final target = cmds[j];
-        if (target is Eraser || target is ObjectEraser) continue; // 一般唔擦 eraser 指令
-        if (_hit(target, erPts, r)) keep[j] = false;
+        final PaintContent target = cmds[j];
+        if (target is Eraser || target is ObjectEraser) continue;
+        if (_hit(target, erPts, r)) {
+          keep[j] = false;
+        }
       }
     }
 
