@@ -8,9 +8,18 @@ import 'paint_content.dart';
 
 /// 自由线条绘制内容
 ///
-/// 支持两种绘制模式：
-/// 1. 传统路径模式：直接连接绘制点
-/// 2. 贝塞尔曲线模式：使用二次贝塞尔曲线平滑连接，提供更流畅的线条效果
+/// 这版只保留真正有效的逻辑：
+///
+/// 1. 主干使用二次贝塞尔平滑
+/// 2. 当前最新末端使用 live cursor 补尾
+/// 3. 使用 coalesced events 提高点密度
+/// 4. 不同输入装置使用不同最小采样距离
+///
+/// 已移除：
+///
+/// - predicted points
+/// - synthetic prediction
+/// - 实验性 tip / tail 逻辑
 class SimpleLine extends PaintContent {
   SimpleLine({
     this.minPointDistance = 2.0,
@@ -40,13 +49,20 @@ class SimpleLine extends PaintContent {
   factory SimpleLine.fromJson(Map<String, dynamic> data) {
     final bool hasPoints = data.containsKey('points');
 
+    final double minPointDistance = ((data['minPointDistance'] ?? 2.0) as num).toDouble();
+    final double stylusMinPointDistance =
+        ((data['stylusMinPointDistance'] ?? 0.75) as num).toDouble();
+    final double touchMinPointDistance = ((data['touchMinPointDistance'] ?? 2.0) as num).toDouble();
+    final double mouseMinPointDistance = ((data['mouseMinPointDistance'] ?? 1.2) as num).toDouble();
+    final bool useBezierCurve = (data['useBezierCurve'] ?? true) as bool;
+
     if (hasPoints) {
       return SimpleLine.data(
-        minPointDistance: (data['minPointDistance'] ?? 2.0) as double,
-        stylusMinPointDistance: (data['stylusMinPointDistance'] ?? 0.75) as double,
-        touchMinPointDistance: (data['touchMinPointDistance'] ?? 2.0) as double,
-        mouseMinPointDistance: (data['mouseMinPointDistance'] ?? 1.2) as double,
-        useBezierCurve: (data['useBezierCurve'] ?? true) as bool,
+        minPointDistance: minPointDistance,
+        stylusMinPointDistance: stylusMinPointDistance,
+        touchMinPointDistance: touchMinPointDistance,
+        mouseMinPointDistance: mouseMinPointDistance,
+        useBezierCurve: useBezierCurve,
         points: (data['points'] as List<dynamic>)
             .map((dynamic e) => jsonToOffset(e as Map<String, dynamic>))
             .toList(),
@@ -54,18 +70,18 @@ class SimpleLine extends PaintContent {
       );
     } else {
       return SimpleLine.data(
-        minPointDistance: (data['minPointDistance'] ?? 2.0) as double,
-        stylusMinPointDistance: (data['stylusMinPointDistance'] ?? 0.75) as double,
-        touchMinPointDistance: (data['touchMinPointDistance'] ?? 2.0) as double,
-        mouseMinPointDistance: (data['mouseMinPointDistance'] ?? 1.2) as double,
-        useBezierCurve: (data['useBezierCurve'] ?? false) as bool,
+        minPointDistance: minPointDistance,
+        stylusMinPointDistance: stylusMinPointDistance,
+        touchMinPointDistance: touchMinPointDistance,
+        mouseMinPointDistance: mouseMinPointDistance,
+        useBezierCurve: useBezierCurve,
         path: DrawPath.fromJson(data['path'] as Map<String, dynamic>),
         paint: jsonToPaint(data['paint'] as Map<String, dynamic>),
       );
     }
   }
 
-  /// 旧版统一门槛（仍保留兼容）
+  /// 旧版统一门槛（保留兼容）
   final double minPointDistance;
 
   /// Apple Pencil / stylus 门槛
@@ -83,7 +99,7 @@ class SimpleLine extends PaintContent {
   /// 传统路径模式
   DrawPath path = DrawPath();
 
-  /// 贝塞尔模式真实采样点（会序列化）
+  /// 贝塞尔模式真实采样点（会序列化 / history / hit-test）
   List<Offset>? points;
 
   /// 当前输入装置类型
@@ -95,19 +111,15 @@ class SimpleLine extends PaintContent {
   /// 最新实时点（即使未达提交门槛）
   Offset? _liveCursor;
 
-  /// predicted points（仅预览，不入 history/json）
-  List<Offset> _predictedPoints = <Offset>[];
-
   /// 已确认主路径
   Path _renderPath = Path();
 
-  /// 贴笔尖的实时尾巴
+  /// 当前最新尾巴
   Path _liveTipPath = Path();
 
   /// 已确认主路径当前结束位置（通常为上一个 midpoint）
   Offset? _lastMidPoint;
 
-  // object eraser usage
   List<Offset> get hitTestPoints {
     if (useBezierCurve) {
       return points ?? const <Offset>[];
@@ -128,7 +140,6 @@ class SimpleLine extends PaintContent {
   void startDraw(Offset startPoint) {
     _lastCommittedPoint = startPoint;
     _liveCursor = startPoint;
-    _predictedPoints = <Offset>[];
     _lastMidPoint = null;
     _renderPath = Path();
     _liveTipPath = Path();
@@ -146,14 +157,13 @@ class SimpleLine extends PaintContent {
   @override
   void drawing(Offset nowPoint) {
     if (!useBezierCurve) {
-      if (_lastCommittedPoint != null) {
-        final double distance = (nowPoint - _lastCommittedPoint!).distance;
-        if (distance < minPointDistance) {
-          return;
-        }
+      if (_lastCommittedPoint != null &&
+          (nowPoint - _lastCommittedPoint!).distance < minPointDistance) {
+        return;
       }
       path.lineTo(nowPoint.dx, nowPoint.dy);
       _lastCommittedPoint = nowPoint;
+      _liveCursor = nowPoint;
       return;
     }
 
@@ -167,6 +177,8 @@ class SimpleLine extends PaintContent {
       return;
     }
 
+    _activeKind = e.kind;
+
     final List<PointerEvent> events = PaintContent.coalescedOf(e);
     if (events.isNotEmpty) {
       for (final PointerEvent pe in events) {
@@ -175,10 +187,6 @@ class SimpleLine extends PaintContent {
     } else {
       _handleRealtimePoint(e.localPosition);
     }
-
-    _updatePredictedPoints(
-      PaintContent.predictedOf(e).map((PointerEvent pe) => pe.localPosition).toList(),
-    );
   }
 
   @override
@@ -187,7 +195,6 @@ class SimpleLine extends PaintContent {
       _activeKind = e.kind;
       _liveCursor = e.localPosition;
       _commitFinalLiveCursorIfNeeded();
-      _predictedPoints = <Offset>[];
       _rebuildLiveTipPath();
     }
     super.onPointerUp(e);
@@ -199,15 +206,8 @@ class SimpleLine extends PaintContent {
       return;
     }
 
-    _predictedPoints = <Offset>[];
-
     final List<Offset>? pts = points;
-    if (pts == null || pts.isEmpty) {
-      _liveTipPath = Path();
-      return;
-    }
-
-    if (pts.length == 1) {
+    if (pts == null || pts.length < 2) {
       _liveTipPath = Path();
       return;
     }
@@ -263,9 +263,7 @@ class SimpleLine extends PaintContent {
       return true;
     }
 
-    final Offset last = pts.last;
-    final double distance = (point - last).distance;
-    return distance >= _effectiveMinPointDistance();
+    return (point - pts.last).distance >= _effectiveMinPointDistance();
   }
 
   double _effectiveMinPointDistance() {
@@ -330,113 +328,42 @@ class SimpleLine extends PaintContent {
     _appendRealPoint(live);
   }
 
-  void _updatePredictedPoints(List<Offset> rawPredicted) {
-    if (!useBezierCurve) {
-      return;
-    }
-
-    final List<Offset>? pts = points;
-    if (pts == null || pts.isEmpty) {
-      _predictedPoints = <Offset>[];
-      _liveTipPath = Path();
-      return;
-    }
-
-    final List<Offset> filtered = <Offset>[];
-    Offset anchor = _liveCursor ?? pts.last;
-
-    for (final Offset p in rawPredicted) {
-      if ((p - anchor).distance < _effectiveMinPointDistance()) {
-        continue;
-      }
-      if (filtered.isNotEmpty && (p - filtered.last).distance < _effectiveMinPointDistance()) {
-        continue;
-      }
-      filtered.add(p);
-      anchor = p;
-    }
-
-    _predictedPoints = filtered;
-    _rebuildLiveTipPath();
-  }
-
   void _rebuildLiveTipPath() {
     _liveTipPath = Path();
 
     final List<Offset>? pts = points;
-    if (!useBezierCurve || pts == null || pts.isEmpty) {
+    final Offset? live = _liveCursor;
+
+    if (!useBezierCurve || pts == null || pts.isEmpty || live == null) {
       return;
     }
 
     if (pts.length == 1) {
-      final List<Offset> chain = <Offset>[];
       final Offset start = pts.first;
-
-      if (_liveCursor != null && (_liveCursor! - start).distance > 0.001) {
-        chain.add(_liveCursor!);
-      }
-      for (final Offset p in _predictedPoints) {
-        if (chain.isEmpty) {
-          if ((p - start).distance > 0.001) {
-            chain.add(p);
-          }
-        } else if ((p - chain.last).distance > 0.001) {
-          chain.add(p);
-        }
-      }
-
-      if (chain.isEmpty) {
+      if ((live - start).distance <= 0.001) {
         return;
       }
 
       _liveTipPath.moveTo(start.dx, start.dy);
-      _appendChainToPath(_liveTipPath, chain);
+      _liveTipPath.lineTo(live.dx, live.dy);
       return;
     }
 
     final Offset start = _lastMidPoint ?? pts.first;
-    final List<Offset> chain = <Offset>[];
-    chain.add(pts.last);
-
-    if (_liveCursor != null && (_liveCursor! - chain.last).distance > 0.001) {
-      chain.add(_liveCursor!);
-    }
-
-    for (final Offset p in _predictedPoints) {
-      if ((p - chain.last).distance > 0.001) {
-        chain.add(p);
-      }
-    }
+    final Offset committed = pts.last;
 
     _liveTipPath.moveTo(start.dx, start.dy);
-    _appendChainToPath(_liveTipPath, chain);
-  }
-
-  void _appendChainToPath(Path path, List<Offset> chain) {
-    if (chain.isEmpty) {
-      return;
-    }
-
-    if (chain.length == 1) {
-      final Offset p = chain.first;
-      path.quadraticBezierTo(p.dx, p.dy, p.dx, p.dy);
-      return;
-    }
-
-    for (int i = 0; i < chain.length - 1; i++) {
-      final Offset control = chain[i];
-      final Offset end = _midPoint(control, chain[i + 1]);
-      path.quadraticBezierTo(control.dx, control.dy, end.dx, end.dy);
-    }
-
-    final Offset last = chain.last;
-    path.quadraticBezierTo(last.dx, last.dy, last.dx, last.dy);
+    _liveTipPath.quadraticBezierTo(
+      committed.dx,
+      committed.dy,
+      live.dx,
+      live.dy,
+    );
   }
 
   void _rebuildFinalBezierPathFromPoints() {
     _renderPath = Path();
     _liveTipPath = Path();
-    _predictedPoints = <Offset>[];
 
     final List<Offset>? pts = points;
     if (pts == null || pts.isEmpty) {
